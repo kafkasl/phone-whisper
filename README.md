@@ -1,8 +1,18 @@
+<p align="center">
+  <img src="docs/logo.svg" width="128" height="128" alt="Phone Whisper Logo">
+</p>
+
 # Phone Whisper
 
 Push-to-talk dictation for Android.
 
 Phone Whisper lets you speak into most apps without switching keyboards. Tap the floating button, speak, tap again, and your text is inserted into the currently focused text field when the app exposes a standard Android input field.
+
+If you try it and it genuinely saves you time, you can sponsor my work here:
+
+- https://github.com/sponsors/kafkasl
+
+I'm building this as a small open-source project in public, and sponsorship helps me keep improving it.
 
 It supports:
 
