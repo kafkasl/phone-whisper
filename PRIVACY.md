@@ -36,4 +36,4 @@ Third-party services you choose to use, such as OpenAI, may process data accordi
 
 ## Contact
 
-For questions about privacy, contact: [your email]
+For questions about privacy, contact: pol.avms@gmail.com
