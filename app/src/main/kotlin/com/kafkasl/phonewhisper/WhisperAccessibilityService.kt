@@ -4,7 +4,6 @@ import android.accessibilityservice.AccessibilityService
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioFormat
@@ -15,10 +14,12 @@ import android.os.Looper
 import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.ImageView
+import android.widget.TextView
 import android.widget.Toast
 import java.io.ByteArrayOutputStream
 import kotlin.concurrent.thread
@@ -34,20 +35,29 @@ class WhisperAccessibilityService : AccessibilityService() {
         private const val PAD_DP = 10
         private const val MARGIN_DP = 8
         private const val TAP_THRESHOLD_DP = 10
+        private const val FEEDBACK_OFFSET_DP = 56
 
         private const val COLOR_IDLE = 0xDD1C1C1E.toInt()
         private const val COLOR_RECORDING = 0xDDEF4444.toInt()
         private const val COLOR_BUSY = 0xDD6B6B6B.toInt()
+        private const val COLOR_FEEDBACK_BG = 0xEE1C1C1E.toInt()
     }
 
     private enum class State { IDLE, RECORDING, TRANSCRIBING }
 
     private var state = State.IDLE
     private var button: ImageView? = null
+    private var feedbackView: TextView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
+    private var feedbackLayoutParams: WindowManager.LayoutParams? = null
     private var audioRecord: AudioRecord? = null
     private var pcmStream: ByteArrayOutputStream? = null
     private val handler = Handler(Looper.getMainLooper())
+    private val hideFeedback = Runnable {
+        feedbackView?.animate()?.alpha(0f)?.setDuration(180)?.withEndAction {
+            feedbackView?.visibility = View.GONE
+        }?.start()
+    }
 
     // Local transcription engine (loaded lazily)
     private var localTranscriber: LocalTranscriber? = null
@@ -151,24 +161,90 @@ class WhisperAccessibilityService : AccessibilityService() {
             }
         }
 
+        val feedback = TextView(this).apply {
+            textSize = 13f
+            setTextColor(0xFFFFFFFF.toInt())
+            setPadding((12 * dp).toInt(), (8 * dp).toInt(), (12 * dp).toInt(), (8 * dp).toInt())
+            background = pill(COLOR_FEEDBACK_BG)
+            alpha = 0f
+            visibility = View.GONE
+        }
+
+        val feedbackParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+        }
+        positionFeedback(feedbackParams, params)
+
         wm.addView(img, params)
+        wm.addView(feedback, feedbackParams)
         button = img
+        feedbackView = feedback
         layoutParams = params
+        feedbackLayoutParams = feedbackParams
     }
 
     private fun removeOverlay() {
+        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
         button?.let {
-            (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(it)
+            wm.removeView(it)
             button = null
         }
+        feedbackView?.let {
+            wm.removeView(it)
+            feedbackView = null
+        }
+        layoutParams = null
+        feedbackLayoutParams = null
     }
 
     private fun circle(color: Int) = GradientDrawable().apply {
         shape = GradientDrawable.OVAL; setColor(color)
     }
 
+    private fun pill(color: Int) = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = 16 * dp
+        setColor(color)
+    }
+
     private fun setAppearance(color: Int) {
         handler.post { button?.background = circle(color) }
+    }
+
+    private fun positionFeedback(
+        feedbackParams: WindowManager.LayoutParams,
+        bubbleParams: WindowManager.LayoutParams
+    ) {
+        val margin = (MARGIN_DP * dp).toInt()
+        val offset = (FEEDBACK_OFFSET_DP * dp).toInt()
+        feedbackParams.x = maxOf(margin, bubbleParams.x - offset)
+        feedbackParams.y = maxOf(margin, bubbleParams.y - margin)
+    }
+
+    private fun showFeedback(text: String) {
+        handler.post {
+            val view = feedbackView ?: return@post
+            val bubbleParams = layoutParams ?: return@post
+            val feedbackParams = feedbackLayoutParams ?: return@post
+            val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+
+            view.text = text
+            positionFeedback(feedbackParams, bubbleParams)
+            wm.updateViewLayout(view, feedbackParams)
+
+            handler.removeCallbacks(hideFeedback)
+            view.animate().cancel()
+            view.visibility = View.VISIBLE
+            view.alpha = 0f
+            view.animate().alpha(1f).setDuration(120).start()
+            handler.postDelayed(hideFeedback, 1200)
+        }
     }
 
     private fun startPulse() {
@@ -354,16 +430,14 @@ class WhisperAccessibilityService : AccessibilityService() {
     private fun injectText(text: String) {
         val clip = ClipData.newPlainText("phonewhisper", text)
         (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
+        showFeedback("Copied to clipboard")
 
         val root = rootInActiveWindow
         val focused = root?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
 
         if (focused != null) {
-            val ok = focused.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+            focused.performAction(AccessibilityNodeInfo.ACTION_PASTE)
             focused.recycle()
-            if (!ok) toast("Insert failed — text copied to clipboard")
-        } else {
-            toast("No text field focused — text copied to clipboard")
         }
         root?.recycle()
     }
