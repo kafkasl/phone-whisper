@@ -267,15 +267,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                 val ms = System.currentTimeMillis() - t0
                 Log.i(TAG, "Local transcription: ${ms}ms, ${samples.size / SAMPLE_RATE}s audio")
 
-                handler.post {
-                    if (text.isNotBlank()) {
-                        injectText(text)
-                    } else {
-                        toast("No speech detected")
-                    }
-                    state = State.IDLE
-                    setAppearance(COLOR_IDLE)
-                }
+                handleTranscriptionResult(text)
             } catch (e: Exception) {
                 Log.e(TAG, "Local transcription failed", e)
                 handler.post {
@@ -293,12 +285,60 @@ class WhisperAccessibilityService : AccessibilityService() {
         if (apiKey.isBlank()) { reset("Set API key in Phone Whisper app"); return }
 
         TranscriberClient.transcribe(wav, apiKey) { result ->
-            handler.post {
-                if (result.text != null && result.text.isNotBlank()) {
-                    injectText(result.text)
-                } else {
+            if (result.text != null && result.text.isNotBlank()) {
+                handleTranscriptionResult(result.text)
+            } else {
+                handler.post {
                     toast("Error: ${result.error ?: "empty transcript"}")
+                    state = State.IDLE
+                    setAppearance(COLOR_IDLE)
                 }
+            }
+        }
+    }
+
+    private fun handleTranscriptionResult(text: String?) {
+        if (text.isNullOrBlank()) {
+            handler.post {
+                toast("No speech detected")
+                state = State.IDLE
+                setAppearance(COLOR_IDLE)
+            }
+            return
+        }
+
+        val usePostProcessing = prefs().getBoolean("use_post_processing", false)
+        val apiKey = prefs().getString("api_key", "") ?: ""
+
+        if (usePostProcessing) {
+            if (apiKey.isBlank()) {
+                handler.post {
+                    toast("Post-processing needs API key. Using raw text.")
+                    injectText(text)
+                    state = State.IDLE
+                    setAppearance(COLOR_IDLE)
+                }
+                return
+            }
+
+            val prompt = prefs().getString("post_processing_prompt", PostProcessor.DEFAULT_PROMPT) ?: PostProcessor.DEFAULT_PROMPT
+            
+            PostProcessor.process(text, prompt, apiKey) { result ->
+                handler.post {
+                    if (result.text != null && result.text.isNotBlank()) {
+                        injectText(result.text)
+                    } else {
+                        toast("Cleanup failed: ${result.error}")
+                        // Fallback to original text
+                        injectText(text)
+                    }
+                    state = State.IDLE
+                    setAppearance(COLOR_IDLE)
+                }
+            }
+        } else {
+            handler.post {
+                injectText(text)
                 state = State.IDLE
                 setAppearance(COLOR_IDLE)
             }

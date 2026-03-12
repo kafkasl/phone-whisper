@@ -28,6 +28,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var audioRowSub: TextView
     private lateinit var accRowSub: TextView
     private lateinit var keyRowSub: TextView
+    private lateinit var promptRowSub: TextView
+    private lateinit var promptRow: LinearLayout
     private lateinit var modelContainer: LinearLayout
     
     private val modelRows = mutableMapOf<String, ModelRowViews>()
@@ -96,6 +98,30 @@ class MainActivity : AppCompatActivity() {
         for (m in MODEL_CATALOG) modelContainer.addView(buildModelRow(m))
         root.addView(modelContainer)
 
+        // --- Post-Processing Section ---
+        root.addView(sectionHeader("Post-Processing"))
+        
+        val isPostProcessing = prefs().getBoolean("use_post_processing", false)
+        val postProcessSwitch = MaterialSwitch(this).apply {
+            isChecked = isPostProcessing
+            isClickable = false
+        }
+        val postProcessRow = settingsRow("Cleanup transcript", "Uses OpenAI Chat API to fix grammar and punctuation", postProcessSwitch) {
+            val newVal = !postProcessSwitch.isChecked
+            prefs().edit().putBoolean("use_post_processing", newVal).apply()
+            postProcessSwitch.isChecked = newVal
+            refresh()
+        }
+        root.addView(postProcessRow)
+
+        val initialPrompt = prefs().getString("post_processing_prompt", PostProcessor.DEFAULT_PROMPT) ?: PostProcessor.DEFAULT_PROMPT
+        promptRow = settingsRow("Custom Prompt", initialPrompt) { promptPostProcessing() }
+        promptRowSub = promptRow.findViewWithTag("subtitle")
+        // Truncate to a single line or max lines
+        promptRowSub.maxLines = 2
+        promptRowSub.ellipsize = android.text.TextUtils.TruncateAt.END
+        root.addView(promptRow)
+
         // --- Settings Section ---
         root.addView(sectionHeader("Settings"))
         
@@ -111,6 +137,8 @@ class MainActivity : AppCompatActivity() {
         if (!hasPerm(Manifest.permission.RECORD_AUDIO)) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1)
         }
+        
+        refresh()
     }
 
     override fun onResume() { super.onResume(); refresh() }
@@ -231,6 +259,7 @@ class MainActivity : AppCompatActivity() {
         val audio = hasPerm(Manifest.permission.RECORD_AUDIO)
         val acc = WhisperAccessibilityService.instance != null
         val useLocal = prefs().getBoolean("use_local", true)
+        val usePostProcessing = prefs().getBoolean("use_post_processing", false)
         val hasKey = !prefs().getString("api_key", "").isNullOrBlank()
         val hasModel = LocalTranscriber.availableModels(this).isNotEmpty()
 
@@ -238,11 +267,15 @@ class MainActivity : AppCompatActivity() {
         accRowSub.text = if (acc) "Enabled" else "Tap to enable in settings"
 
         modelContainer.visibility = if (useLocal) View.VISIBLE else View.GONE
+        promptRow.visibility = if (usePostProcessing) View.VISIBLE else View.GONE
 
         val apiKey = prefs().getString("api_key", "") ?: ""
         keyRowSub.text = if (apiKey.isBlank()) "Tap to set" 
                          else if (apiKey.length > 7) "sk-...${apiKey.takeLast(4)}" 
                          else "sk-...***"
+
+        val prompt = prefs().getString("post_processing_prompt", PostProcessor.DEFAULT_PROMPT) ?: PostProcessor.DEFAULT_PROMPT
+        promptRowSub.text = prompt
 
         val cur = prefs().getString("model_name", "") ?: ""
         if (cur.isBlank() || !File(filesDir, "models/$cur").exists()) {
@@ -250,7 +283,12 @@ class MainActivity : AppCompatActivity() {
                 ?.let { selectModel(it.archive) }
         }
 
-        val ready = audio && acc && (if (useLocal) hasModel else hasKey)
+        // Ready logic
+        val localReady = useLocal && hasModel
+        val cloudReady = !useLocal && hasKey
+        val postReady = !usePostProcessing || hasKey
+        val ready = audio && acc && (localReady || cloudReady) && postReady
+
         statusSubtitle.text = if (ready) "Ready — tap the overlay dot to dictate" else "Setup required"
         statusSubtitle.setTextColor(if (ready) attrColor(com.google.android.material.R.attr.colorPrimary) else attrColor(android.R.attr.textColorSecondary))
         
@@ -267,6 +305,27 @@ class MainActivity : AppCompatActivity() {
             .setView(input.apply { setPadding(dp(24), dp(8), dp(24), dp(8)) })
             .setPositiveButton("Save") { _, _ ->
                 prefs().edit().putString("api_key", input.text.toString().trim()).apply()
+                refresh()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun promptPostProcessing() {
+        val input = EditText(this).apply {
+            hint = "Prompt"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            minLines = 3
+            gravity = Gravity.TOP or Gravity.START
+            setText(prefs().getString("post_processing_prompt", PostProcessor.DEFAULT_PROMPT))
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Custom Prompt")
+            .setView(input.apply { setPadding(dp(24), dp(8), dp(24), dp(8)) })
+            .setPositiveButton("Save") { _, _ ->
+                val text = input.text.toString().trim()
+                val finalPrompt = if (text.isBlank()) PostProcessor.DEFAULT_PROMPT else text
+                prefs().edit().putString("post_processing_prompt", finalPrompt).apply()
                 refresh()
             }
             .setNegativeButton("Cancel", null)
