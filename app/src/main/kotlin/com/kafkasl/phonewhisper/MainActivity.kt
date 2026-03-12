@@ -105,10 +105,7 @@ class MainActivity : AppCompatActivity() {
                     appendLine("Models found: ${models.joinToString(", ")}")
                 } else {
                     appendLine("⚠️ No models found!")
-                    appendLine("Push models via adb to:")
-                    appendLine("  /sdcard/Android/data/")
-                    appendLine("  com.kafkasl.phonewhisper/")
-                    appendLine("  files/models/<model-name>/")
+                    appendLine("Push models: make push-model MODEL=/path/to/model")
                 }
             } else {
                 appendLine("Mode: ☁️ Cloud (OpenAI API)")

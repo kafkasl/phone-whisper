@@ -24,16 +24,16 @@ class LocalTranscriber private constructor(private val recognizer: OfflineRecogn
     companion object {
         private const val TAG = "LocalTranscriber"
 
-        /** Find available model dirs under the app's external files/models/ dir */
+        /** Find available model dirs under the app's files/models/ dir */
         fun availableModels(ctx: Context): List<String> {
-            val modelsDir = File(ctx.getExternalFilesDir(null), "models")
+            val modelsDir = File(ctx.filesDir, "models")
             if (!modelsDir.exists()) return emptyList()
             return modelsDir.listFiles()?.filter { it.isDirectory }?.map { it.name } ?: emptyList()
         }
 
         /** Create a LocalTranscriber for the given model directory name. Returns null on failure. */
         fun create(ctx: Context, modelName: String): LocalTranscriber? {
-            val modelDir = File(ctx.getExternalFilesDir(null), "models/$modelName")
+            val modelDir = File(ctx.filesDir, "models/$modelName")
             if (!modelDir.exists()) {
                 Log.e(TAG, "Model dir not found: $modelDir")
                 return null
