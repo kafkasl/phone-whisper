@@ -157,4 +157,4 @@ If Phone Whisper saves you time, you can sponsor the project on GitHub:
 
 ## License
 
-Personal project. Do whatever you want with it.
+MIT License. See [LICENSE](LICENSE).
