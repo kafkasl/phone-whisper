@@ -27,6 +27,7 @@ import android.widget.TextView
 import android.widget.Toast
 import java.io.ByteArrayOutputStream
 import kotlin.concurrent.thread
+import java.io.File
 import kotlin.math.abs
 
 class WhisperAccessibilityService : AccessibilityService() {
@@ -92,20 +93,44 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     private fun initLocalModel() {
         val modelName = prefs().getString("model_name", "") ?: ""
-        if (modelName.isBlank()) {
-            // Auto-detect first available model
-            val models = LocalTranscriber.availableModels(this)
-            if (models.isNotEmpty()) {
-                Log.i(TAG, "Auto-detected model: ${models.first()}")
-                localTranscriber = LocalTranscriber.create(this, models.first())
+
+        // Crash-guard: if a previous load attempt didn't finish cleanly, a native
+        // crash (SIGABRT from onnxruntime on a corrupt model) likely killed the
+        // process. Don't retry the same model into the same crash — clear it.
+        val pending = prefs().getString("model_loading", "") ?: ""
+        if (pending.isNotBlank()) {
+            Log.w(TAG, "Previous load of '$pending' crashed; clearing it")
+            if (pending == modelName) {
+                prefs().edit().remove("model_name").apply()
             }
-        } else {
-            localTranscriber = LocalTranscriber.create(this, modelName)
+            // Remove the corrupt model dir so it can be re-downloaded cleanly.
+            File(filesDir, "models/$pending").deleteRecursively()
+            prefs().edit().remove("model_loading").apply()
+            toast("Model '$pending' crashed on load and was removed. Try re-downloading or pick another model.")
+            return
         }
-        if (localTranscriber != null) {
-            Log.i(TAG, "Local transcription ready")
-        } else {
+
+        val target = modelName.ifBlank {
+            LocalTranscriber.availableModels(this).firstOrNull() ?: ""
+        }
+        if (target.isBlank()) {
             Log.i(TAG, "No local model found, will use API")
+            return
+        }
+
+        // Mark this model as "being loaded" before touching native code.
+        prefs().edit().putString("model_loading", target).commit()
+        try {
+            localTranscriber = LocalTranscriber.create(this, target)
+            // Cleared only if we survived the native load.
+            prefs().edit().remove("model_loading").apply()
+            Log.i(TAG, "Local transcription ready")
+        } catch (e: Exception) {
+            // A caught exception means the load failed in-process (not a native
+            // crash), so it's safe to clear the marker — no crash loop to guard.
+            prefs().edit().remove("model_loading").apply()
+            Log.e(TAG, "Model load failed, will use API: ${e.message}", e)
+            toast("Couldn't load model '$target': ${e.message}")
         }
     }
 

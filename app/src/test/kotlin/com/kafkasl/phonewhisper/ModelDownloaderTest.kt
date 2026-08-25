@@ -41,10 +41,24 @@ class ModelDownloaderTest {
     }
 
     @Test fun `catalog has expected structure`() {
-        assertEquals(4, MODEL_CATALOG.size)
+        assertEquals(6, MODEL_CATALOG.size)
         assertTrue(MODEL_CATALOG.any { it.recommended })
         assertTrue(MODEL_CATALOG.all { it.archive.startsWith("sherpa-onnx-") })
         assertTrue(MODEL_CATALOG.all { it.sizeMb > 0 })
+        // Every catalog model must declare a supported architecture so the loader
+        // builds the right config instead of guessing.
+        assertTrue(MODEL_CATALOG.all { it.arch.isSupported })
+    }
+
+    @Test fun `arch inference maps known repo names`() {
+        assertEquals(ModelArch.WHISPER, ModelArch.fromRepoName("sherpa-onnx-whisper-small"))
+        assertEquals(ModelArch.CANARY, ModelArch.fromRepoName("sherpa-onnx-nemo-canary-180m-flash-en-es-de-fr-int8"))
+        assertEquals(ModelArch.NEMO_CTC, ModelArch.fromRepoName("sherpa-onnx-nemo-fast-conformer-ctc-en-de-es-fr-14288"))
+        assertEquals(ModelArch.NEMO_CTC, ModelArch.fromRepoName("sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8"))
+        assertEquals(ModelArch.TRANSDUCER, ModelArch.fromRepoName("sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"))
+        assertEquals(ModelArch.SENSE_VOICE, ModelArch.fromRepoName("sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"))
+        assertEquals(ModelArch.UNKNOWN, ModelArch.fromRepoName("sherpa-onnx-streaming-zipformer-en"))
+        assertEquals(ModelArch.UNKNOWN, ModelArch.fromRepoName("sherpa-onnx-vits-piper-en"))
     }
 
     // -- helpers --
