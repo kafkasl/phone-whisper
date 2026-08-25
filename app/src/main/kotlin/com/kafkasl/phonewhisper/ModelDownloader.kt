@@ -14,6 +14,8 @@ data class Model(
     val sizeMb: Int,
     val quality: String,
     val recommended: Boolean = false,
+    /** Override the download URL. If null, the default sherpa-onnx GitHub release URL is used. */
+    val downloadUrl: String? = null,
 )
 
 val MODEL_CATALOG = listOf(
@@ -48,7 +50,7 @@ object ModelDownloader {
 
     /** Download and extract model. Callbacks fire on background thread. */
     fun download(ctx: Context, model: Model, onState: (DownloadState) -> Unit) {
-        val url = "$BASE_URL/${model.archive}.tar.bz2"
+        val url = model.downloadUrl ?: "$BASE_URL/${model.archive}.tar.bz2"
         val tmpFile = File(ctx.cacheDir, "${model.archive}.tar.bz2")
         val outDir = File(ctx.filesDir, "models")
 

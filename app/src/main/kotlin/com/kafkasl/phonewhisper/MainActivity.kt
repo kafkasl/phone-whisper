@@ -34,6 +34,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var promptContainer: LinearLayout
 
     private val modelRows = mutableMapOf<String, ModelRowViews>()
+    private val hfModelRows = mutableMapOf<String, ModelRowViews>()
+    private var hfModels: List<HuggingFaceModelBrowser.HFModel> = emptyList()
     private val promptRows = mutableMapOf<String, PromptRowViews>()
 
     private data class ModelRowViews(
@@ -103,6 +105,28 @@ class MainActivity : AppCompatActivity() {
         modelContainer = vertical(0)
         modelContainer.addView(sectionHeader("Local models"))
         for (m in MODEL_CATALOG) modelContainer.addView(buildModelRow(m))
+
+        // --- Multilingual model browser ---
+        val hfContainer = vertical(0)
+        hfContainer.tag = "hf_container"
+
+        val showLargeSwitch = com.google.android.material.materialswitch.MaterialSwitch(this).apply {
+            text = "Show large models (>600 MB)"
+            textSize = 14f
+            setPadding(dp(24), dp(4), dp(24), dp(4))
+        }
+
+        val browseBtn = com.google.android.material.button.MaterialButton(this).apply {
+            text = "Browse multilingual models"
+            setOnClickListener { loadHFModels(hfContainer, showLargeSwitch.isChecked) }
+            layoutParams = LinearLayout.LayoutParams(LP_WRAP, LP_WRAP).apply {
+                leftMargin = dp(24); topMargin = dp(8); bottomMargin = dp(4)
+            }
+        }
+        modelContainer.addView(browseBtn)
+        modelContainer.addView(showLargeSwitch)
+        modelContainer.addView(hfContainer)
+
         root.addView(modelContainer)
 
         // --- Post-Processing Section ---
@@ -155,9 +179,53 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(c, p, r); refresh()
     }
 
-    // --- Model Rows ---
+    // --- HuggingFace Model Browser ---
 
-    private fun buildModelRow(model: Model): View {
+    private fun loadHFModels(container: LinearLayout, showLargeModels: Boolean = false) {
+        container.removeAllViews()
+        container.addView(TextView(this).apply {
+            text = "Loading models from HuggingFace..."
+            textSize = 14f
+            setPadding(dp(24), dp(8), dp(24), dp(8))
+            setTextColor(attrColor(android.R.attr.textColorSecondary))
+        })
+
+        Thread {
+            val result = HuggingFaceModelBrowser.fetchModels(showLargeModels)
+            runOnUiThread {
+                container.removeAllViews()
+                when (result) {
+                    is HuggingFaceModelBrowser.BrowseResult.Error -> {
+                        container.addView(TextView(this).apply {
+                            text = "Failed to load: ${result.message}"
+                            textSize = 14f
+                            setPadding(dp(24), dp(8), dp(24), dp(8))
+                            setTextColor(Color.RED)
+                        })
+                    }
+                    is HuggingFaceModelBrowser.BrowseResult.Success -> {
+                        hfModels = result.models
+                        if (hfModels.isEmpty()) {
+                            container.addView(TextView(this).apply {
+                                text = "No phone-suitable models found."
+                                textSize = 14f
+                                setPadding(dp(24), dp(8), dp(24), dp(8))
+                            })
+                        } else {
+                            container.addView(sectionHeader("Multilingual models (from HuggingFace)"))
+                            for (hf in hfModels) {
+                                val model = HuggingFaceModelBrowser.toModel(hf)
+                                container.addView(buildModelRow(model, hfModelRows))
+                            }
+                        }
+                    }
+                }
+            }
+        }.start()
+    }
+
+    /** Build a model row for any model, storing views in the provided map. */
+    private fun buildModelRow(model: Model, rowMap: MutableMap<String, ModelRowViews> = modelRows): View {
         val radio = MaterialRadioButton(this).apply {
             isClickable = false
             buttonTintList = ColorStateList.valueOf(attrColor(com.google.android.material.R.attr.colorPrimary))
@@ -193,16 +261,16 @@ class MainActivity : AppCompatActivity() {
         val textContainer = row.getChildAt(0) as LinearLayout
         textContainer.addView(progress)
         
-        modelRows[model.archive] = ModelRowViews(
+        rowMap[model.archive] = ModelRowViews(
             radio, progress, textContainer.findViewWithTag("subtitle"), dlBtn
         )
-        refreshCard(model)
+        refreshCard(model, rowMap)
         
         return row
     }
 
     private fun onModelAction(model: Model) {
-        val views = modelRows[model.archive] ?: return
+        val views = modelRows[model.archive] ?: hfModelRows[model.archive] ?: return
 
         if (ModelDownloader.isInstalled(this, model)) {
             selectModel(model.archive)
@@ -246,8 +314,8 @@ class MainActivity : AppCompatActivity() {
         refreshAllCards(); refresh()
     }
 
-    private fun refreshCard(model: Model) {
-        val views = modelRows[model.archive] ?: return
+    private fun refreshCard(model: Model, rowMap: Map<String, ModelRowViews> = modelRows) {
+        val views = rowMap[model.archive] ?: return
         val active = prefs().getString("model_name", "") == model.archive
         val installed = ModelDownloader.isInstalled(this, model)
         
@@ -260,7 +328,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun refreshAllCards() = MODEL_CATALOG.forEach { refreshCard(it) }
+    private fun refreshAllCards() {
+        MODEL_CATALOG.forEach { refreshCard(it, modelRows) }
+        hfModels.forEach { hf -> refreshCard(HuggingFaceModelBrowser.toModel(hf), hfModelRows) }
+    }
 
     // --- Prompt Rows ---
 
