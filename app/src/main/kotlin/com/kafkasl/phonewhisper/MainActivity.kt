@@ -34,7 +34,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var promptContainer: LinearLayout
 
     private val modelRows = mutableMapOf<String, ModelRowViews>()
+    private val hfModelRows = mutableMapOf<String, ModelRowViews>()
+    private var hfModels: List<HuggingFaceModelBrowser.HFModel> = emptyList()
     private val promptRows = mutableMapOf<String, PromptRowViews>()
+
+    /** Archives currently downloading or extracting — not yet usable. */
+    private val inProgress = mutableSetOf<String>()
 
     private data class ModelRowViews(
         val radio: MaterialRadioButton,
@@ -103,6 +108,28 @@ class MainActivity : AppCompatActivity() {
         modelContainer = vertical(0)
         modelContainer.addView(sectionHeader("Local models"))
         for (m in MODEL_CATALOG) modelContainer.addView(buildModelRow(m))
+
+        // --- Multilingual model browser ---
+        val hfContainer = vertical(0)
+        hfContainer.tag = "hf_container"
+
+        val showLargeSwitch = com.google.android.material.materialswitch.MaterialSwitch(this).apply {
+            text = "Show large models (>600 MB)"
+            textSize = 14f
+            setPadding(dp(24), dp(4), dp(24), dp(4))
+        }
+
+        val browseBtn = com.google.android.material.button.MaterialButton(this).apply {
+            text = "Browse multilingual models"
+            setOnClickListener { loadHFModels(hfContainer, showLargeSwitch.isChecked) }
+            layoutParams = LinearLayout.LayoutParams(LP_WRAP, LP_WRAP).apply {
+                leftMargin = dp(24); topMargin = dp(8); bottomMargin = dp(4)
+            }
+        }
+        modelContainer.addView(browseBtn)
+        modelContainer.addView(showLargeSwitch)
+        modelContainer.addView(hfContainer)
+
         root.addView(modelContainer)
 
         // --- Post-Processing Section ---
@@ -155,9 +182,53 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(c, p, r); refresh()
     }
 
-    // --- Model Rows ---
+    // --- HuggingFace Model Browser ---
 
-    private fun buildModelRow(model: Model): View {
+    private fun loadHFModels(container: LinearLayout, showLargeModels: Boolean = false) {
+        container.removeAllViews()
+        container.addView(TextView(this).apply {
+            text = "Loading models from HuggingFace..."
+            textSize = 14f
+            setPadding(dp(24), dp(8), dp(24), dp(8))
+            setTextColor(attrColor(android.R.attr.textColorSecondary))
+        })
+
+        Thread {
+            val result = HuggingFaceModelBrowser.fetchModels(showLargeModels)
+            runOnUiThread {
+                container.removeAllViews()
+                when (result) {
+                    is HuggingFaceModelBrowser.BrowseResult.Error -> {
+                        container.addView(TextView(this).apply {
+                            text = "Failed to load: ${result.message}"
+                            textSize = 14f
+                            setPadding(dp(24), dp(8), dp(24), dp(8))
+                            setTextColor(Color.RED)
+                        })
+                    }
+                    is HuggingFaceModelBrowser.BrowseResult.Success -> {
+                        hfModels = result.models
+                        if (hfModels.isEmpty()) {
+                            container.addView(TextView(this).apply {
+                                text = "No phone-suitable models found."
+                                textSize = 14f
+                                setPadding(dp(24), dp(8), dp(24), dp(8))
+                            })
+                        } else {
+                            container.addView(sectionHeader("Multilingual models (from HuggingFace)"))
+                            for (hf in hfModels) {
+                                val model = HuggingFaceModelBrowser.toModel(hf)
+                                container.addView(buildModelRow(model, hfModelRows))
+                            }
+                        }
+                    }
+                }
+            }
+        }.start()
+    }
+
+    /** Build a model row for any model, storing views in the provided map. */
+    private fun buildModelRow(model: Model, rowMap: MutableMap<String, ModelRowViews> = modelRows): View {
         val radio = MaterialRadioButton(this).apply {
             isClickable = false
             buttonTintList = ColorStateList.valueOf(attrColor(com.google.android.material.R.attr.colorPrimary))
@@ -166,6 +237,7 @@ class MainActivity : AppCompatActivity() {
             text = "↓"
             textSize = 18f
             setTextColor(attrColor(com.google.android.material.R.attr.colorPrimary))
+            setOnClickListener { onModelAction(model) }
         }
         
         val progress = LinearProgressIndicator(this).apply {
@@ -177,9 +249,14 @@ class MainActivity : AppCompatActivity() {
 
         val rightContainer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            addView(dlBtn)
-            addView(radio)
+            gravity = Gravity.CENTER
+            val slot = dp(48)
+            addView(dlBtn, LinearLayout.LayoutParams(slot, slot).apply {
+                gravity = Gravity.CENTER
+            })
+            addView(radio, LinearLayout.LayoutParams(slot, slot).apply {
+                gravity = Gravity.CENTER
+            })
         }
 
         val row = settingsRow(
@@ -193,16 +270,16 @@ class MainActivity : AppCompatActivity() {
         val textContainer = row.getChildAt(0) as LinearLayout
         textContainer.addView(progress)
         
-        modelRows[model.archive] = ModelRowViews(
+        rowMap[model.archive] = ModelRowViews(
             radio, progress, textContainer.findViewWithTag("subtitle"), dlBtn
         )
-        refreshCard(model)
+        refreshCard(model, rowMap)
         
         return row
     }
 
     private fun onModelAction(model: Model) {
-        val views = modelRows[model.archive] ?: return
+        val views = modelRows[model.archive] ?: hfModelRows[model.archive] ?: return
 
         if (ModelDownloader.isInstalled(this, model)) {
             selectModel(model.archive)
@@ -213,6 +290,7 @@ class MainActivity : AppCompatActivity() {
         views.progress.visibility = View.VISIBLE
         views.progress.isIndeterminate = false
         views.subtitle.text = "Starting download..."
+        inProgress.add(model.archive)
 
         ModelDownloader.download(this, model) { state ->
             runOnUiThread {
@@ -226,11 +304,13 @@ class MainActivity : AppCompatActivity() {
                         views.subtitle.text = "Extracting..."
                     }
                     is DownloadState.Done -> {
+                        inProgress.remove(model.archive)
                         views.progress.visibility = View.GONE
                         selectModel(model.archive)
                         toast("${model.name} ready!")
                     }
                     is DownloadState.Error -> {
+                        inProgress.remove(model.archive)
                         views.progress.visibility = View.GONE
                         views.subtitle.text = "Error: ${state.message}"
                         views.dlBtn.isEnabled = true
@@ -246,21 +326,33 @@ class MainActivity : AppCompatActivity() {
         refreshAllCards(); refresh()
     }
 
-    private fun refreshCard(model: Model) {
-        val views = modelRows[model.archive] ?: return
+    private fun refreshCard(model: Model, rowMap: Map<String, ModelRowViews> = modelRows) {
+        val views = rowMap[model.archive] ?: return
+
+        // Mid-download/extraction: keep showing progress, hide radio + button.
+        if (model.archive in inProgress) {
+            views.progress.visibility = View.VISIBLE
+            views.radio.visibility = View.GONE
+            views.dlBtn.visibility = View.GONE
+            return
+        }
+
         val active = prefs().getString("model_name", "") == model.archive
         val installed = ModelDownloader.isInstalled(this, model)
-        
+
         views.radio.isChecked = active
         views.radio.visibility = if (installed) View.VISIBLE else View.GONE
         views.dlBtn.visibility = if (installed) View.GONE else View.VISIBLE
-        
+
         if (views.progress.visibility == View.GONE) {
             views.subtitle.text = "${model.quality} · ${model.sizeMb} MB"
         }
     }
 
-    private fun refreshAllCards() = MODEL_CATALOG.forEach { refreshCard(it) }
+    private fun refreshAllCards() {
+        MODEL_CATALOG.forEach { refreshCard(it, modelRows) }
+        hfModels.forEach { hf -> refreshCard(HuggingFaceModelBrowser.toModel(hf), hfModelRows) }
+    }
 
     // --- Prompt Rows ---
 
