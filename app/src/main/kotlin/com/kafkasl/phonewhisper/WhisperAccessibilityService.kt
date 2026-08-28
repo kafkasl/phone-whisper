@@ -67,8 +67,37 @@ class WhisperAccessibilityService : AccessibilityService() {
         }?.start()
     }
 
-    // Local transcription engine (loaded lazily)
+    // Local transcription engine (loaded dynamically)
+    @Volatile
     private var localTranscriber: LocalTranscriber? = null
+
+    @Volatile
+    private var isModelLoading = false
+
+    private val releaseModelRunnable = Runnable {
+        thread {
+            synchronized(this) {
+                localTranscriber?.let {
+                    Log.i(TAG, "Releasing local transcriber model due to inactivity")
+                    it.release()
+                    localTranscriber = null
+                }
+            }
+        }
+    }
+
+    private fun resetModelReleaseTimer() {
+        handler.removeCallbacks(releaseModelRunnable)
+        handler.postDelayed(releaseModelRunnable, 2 * 60 * 1000) // 2 minutes
+    }
+
+    private fun ensureModelLoaded() {
+        handler.removeCallbacks(releaseModelRunnable)
+        if (localTranscriber == null) {
+            Log.i(TAG, "Pre-loading model...")
+            thread { initLocalModel() }
+        }
+    }
 
     private val dp get() = resources.displayMetrics.density
     private val screenW get() = resources.displayMetrics.widthPixels
@@ -77,8 +106,11 @@ class WhisperAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         instance = this
         showOverlay()
-        // Try to load local model in background
-        thread { initLocalModel() }
+        // Try to load local model in background, and schedule release if unused
+        thread {
+            initLocalModel()
+            resetModelReleaseTimer()
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
@@ -87,30 +119,64 @@ class WhisperAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         instance = null
         removeOverlay()
+        handler.removeCallbacks(releaseModelRunnable)
+        synchronized(this) {
+            localTranscriber?.let {
+                Log.i(TAG, "Releasing model during service destroy")
+                it.release()
+                localTranscriber = null
+            }
+        }
         super.onDestroy()
     }
 
     private fun initLocalModel() {
-        val modelName = prefs().getString("model_name", "") ?: ""
-        if (modelName.isBlank()) {
-            // Auto-detect first available model
-            val models = LocalTranscriber.availableModels(this)
-            if (models.isNotEmpty()) {
-                Log.i(TAG, "Auto-detected model: ${models.first()}")
-                localTranscriber = LocalTranscriber.create(this, models.first())
-            }
-        } else {
-            localTranscriber = LocalTranscriber.create(this, modelName)
+        synchronized(this) {
+            if (localTranscriber != null) return
+            if (isModelLoading) return
+            isModelLoading = true
         }
-        if (localTranscriber != null) {
-            Log.i(TAG, "Local transcription ready")
-        } else {
-            Log.i(TAG, "No local model found, will use API")
+        try {
+            val modelName = prefs().getString("model_name", "") ?: ""
+            val transcriber = if (modelName.isBlank()) {
+                // Auto-detect first available model
+                val models = LocalTranscriber.availableModels(this)
+                if (models.isNotEmpty()) {
+                    Log.i(TAG, "Auto-detected model: ${models.first()}")
+                    LocalTranscriber.create(this, models.first())
+                } else null
+            } else {
+                LocalTranscriber.create(this, modelName)
+            }
+            synchronized(this) {
+                localTranscriber = transcriber
+                if (transcriber != null) {
+                    Log.i(TAG, "Local transcription ready")
+                } else {
+                    Log.i(TAG, "No local model found, will use API")
+                }
+            }
+        } finally {
+            synchronized(this) {
+                isModelLoading = false
+            }
         }
     }
 
     /** Reload local model (called from MainActivity when settings change) */
-    fun reloadModel() { thread { initLocalModel() } }
+    fun reloadModel() {
+        thread {
+            synchronized(this) {
+                localTranscriber?.let {
+                    Log.i(TAG, "Releasing old model for reload")
+                    it.release()
+                    localTranscriber = null
+                }
+            }
+            initLocalModel()
+            resetModelReleaseTimer()
+        }
+    }
 
     // --- Overlay ---
 
@@ -311,6 +377,11 @@ class WhisperAccessibilityService : AccessibilityService() {
     }
 
     private fun startRecording() {
+        val useLocal = prefs().getBoolean("use_local", true)
+        if (useLocal) {
+            ensureModelLoaded()
+        }
+
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
             != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             toast("Grant audio permission in Phone Whisper app"); return
@@ -358,10 +429,23 @@ class WhisperAccessibilityService : AccessibilityService() {
         if (pcm.isEmpty()) { reset("No audio captured"); return }
 
         val useLocal = prefs().getBoolean("use_local", true)
-        val local = localTranscriber
-
-        if (useLocal && local != null) {
-            transcribeLocal(pcm, local)
+        if (useLocal) {
+            thread {
+                var attempts = 0
+                // Wait up to 10 seconds (100 * 100ms) for local model to load if in progress
+                while (localTranscriber == null && isModelLoading && attempts < 100) {
+                    Thread.sleep(100)
+                    attempts++
+                }
+                val local = localTranscriber
+                if (local != null) {
+                    transcribeLocal(pcm, local)
+                } else {
+                    handler.post {
+                        reset("Local model not loaded yet. Please try again.")
+                    }
+                }
+            }
         } else {
             transcribeApi(pcm)
         }
@@ -386,6 +470,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                 handleTranscriptionResult(text)
             } catch (e: Exception) {
                 Log.e(TAG, "Local transcription failed", e)
+                resetModelReleaseTimer()
                 handler.post {
                     toast("Local error: ${e.message}")
                     state = State.IDLE
@@ -416,6 +501,7 @@ class WhisperAccessibilityService : AccessibilityService() {
     }
 
     private fun handleTranscriptionResult(text: String?) {
+        resetModelReleaseTimer()
         if (text.isNullOrBlank()) {
             handler.post {
                 toast("No speech detected")

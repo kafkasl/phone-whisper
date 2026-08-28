@@ -21,6 +21,11 @@ class LocalTranscriber private constructor(private val recognizer: OfflineRecogn
         return result.text.trim()
     }
 
+    /** Explicitly release native resources associated with the recognizer. */
+    fun release() {
+        recognizer.release()
+    }
+
     companion object {
         private const val TAG = "LocalTranscriber"
 
