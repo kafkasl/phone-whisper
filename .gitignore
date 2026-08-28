@@ -4,4 +4,11 @@ build/
 local.properties
 .env
 *.apk
-app/src/main/jniLibs/
+# Vendored sherpa-onnx native libs ARE tracked (see app/src/main/jniLibs/README.md).
+# Ignore everything else that lands here so stray/local .so files aren't committed.
+app/src/main/jniLibs/**
+!app/src/main/jniLibs/
+!app/src/main/jniLibs/README.md
+!app/src/main/jniLibs/arm64-v8a/
+!app/src/main/jniLibs/arm64-v8a/libsherpa-onnx-jni.so
+!app/src/main/jniLibs/arm64-v8a/libonnxruntime.so

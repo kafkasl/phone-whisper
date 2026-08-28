@@ -27,6 +27,7 @@ import android.widget.TextView
 import android.widget.Toast
 import java.io.ByteArrayOutputStream
 import kotlin.concurrent.thread
+import java.io.File
 import kotlin.math.abs
 
 class WhisperAccessibilityService : AccessibilityService() {
@@ -92,25 +93,65 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     private fun initLocalModel() {
         val modelName = prefs().getString("model_name", "") ?: ""
-        if (modelName.isBlank()) {
-            // Auto-detect first available model
-            val models = LocalTranscriber.availableModels(this)
-            if (models.isNotEmpty()) {
-                Log.i(TAG, "Auto-detected model: ${models.first()}")
-                localTranscriber = LocalTranscriber.create(this, models.first())
+
+        // Crash-guard: if a previous load attempt didn't finish cleanly, a native
+        // crash (SIGABRT from onnxruntime on a corrupt model) likely killed the
+        // process. Don't retry the same model into the same crash — clear it.
+        val pending = prefs().getString("model_loading", "") ?: ""
+        if (pending.isNotBlank()) {
+            Log.w(TAG, "Previous load of '$pending' crashed; clearing it")
+            if (pending == modelName) {
+                prefs().edit().remove("model_name").apply()
             }
-        } else {
-            localTranscriber = LocalTranscriber.create(this, modelName)
+            // Remove the corrupt model dir so it can be re-downloaded cleanly.
+            File(filesDir, "models/$pending").deleteRecursively()
+            prefs().edit().remove("model_loading").apply()
+            toast("Model '$pending' crashed on load and was removed. Try re-downloading or pick another model.")
+            return
         }
-        if (localTranscriber != null) {
-            Log.i(TAG, "Local transcription ready")
-        } else {
+
+        val target = modelName.ifBlank {
+            LocalTranscriber.availableModels(this).firstOrNull() ?: ""
+        }
+        if (target.isBlank()) {
             Log.i(TAG, "No local model found, will use API")
+            return
+        }
+
+        // Warn if the model can't auto-detect the language and none is set — it
+        // would silently fall back to English (e.g. Canary on French audio).
+        val lang = resolveLanguage(target)
+        if (lang.isBlank() &&
+            LocalTranscriber.archOf(this, target).languageMode == LanguageMode.NEEDS_LANGUAGE) {
+            toast("This model can't auto-detect language (defaulting to English). " +
+                "Set a language in the app, or use a Whisper/NeMo multilingual model for auto-detect.")
+        }
+
+        // Mark this model as "being loaded" before touching native code.
+        prefs().edit().putString("model_loading", target).commit()
+        try {
+            localTranscriber = LocalTranscriber.create(this, target, lang)
+            // Cleared only if we survived the native load.
+            prefs().edit().remove("model_loading").apply()
+            Log.i(TAG, "Local transcription ready")
+        } catch (e: Exception) {
+            // A caught exception means the load failed in-process (not a native
+            // crash), so it's safe to clear the marker — no crash loop to guard.
+            prefs().edit().remove("model_loading").apply()
+            Log.e(TAG, "Model load failed, will use API: ${e.message}", e)
+            toast("Couldn't load model '$target': ${e.message}")
         }
     }
 
     /** Reload local model (called from MainActivity when settings change) */
     fun reloadModel() { thread { initLocalModel() } }
+
+    /** Resolve the recognition language for a model: a per-model override (seam
+     *  for the future) falls back to the global "language" pref ("" = auto). */
+    private fun resolveLanguage(modelName: String): String {
+        val p = prefs()
+        return p.getString("lang_$modelName", null) ?: p.getString("language", "") ?: ""
+    }
 
     // --- Overlay ---
 
@@ -479,26 +520,52 @@ class WhisperAccessibilityService : AccessibilityService() {
         feedback: String? = "Copied to clipboard",
         feedbackDurationMs: Long = 2000
     ) {
-        val clip = ClipData.newPlainText("phonewhisper", text)
-        (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
-        feedback?.let { showFeedback(it, feedbackDurationMs) }
+        // When the keyboard is open there's a focused field we can write to
+        // directly, so (if enabled) skip the clipboard to avoid clobbering it.
+        val avoidClipboard = prefs().getBoolean("avoid_clipboard_when_keyboard", true) &&
+            isKeyboardOpen()
 
-        val candidates = findInjectionCandidates()
-        Log.i(TAG, "Injecting text into ${candidates.size} candidate node(s)")
+        if (!avoidClipboard) {
+            setClipboard(text)
+            feedback?.let { showFeedback(it, feedbackDurationMs) }
+        }
 
-        var injected = false
-        try {
-            for (candidate in candidates) {
-                if (tryInjectIntoNode(candidate, text)) {
-                    injected = true
-                    break
-                }
-            }
-        } finally {
-            candidates.forEach { it.recycle() }
+        var injected = injectOnce(text, clipboardMode = !avoidClipboard)
+
+        if (!injected && avoidClipboard) {
+            // Direct insertion didn't take — fall back to clipboard + paste.
+            Log.i(TAG, "Direct insert failed; falling back to clipboard")
+            setClipboard(text)
+            feedback?.let { showFeedback(it, feedbackDurationMs) }
+            injected = injectOnce(text, clipboardMode = true)
         }
 
         Log.i(TAG, if (injected) "Text injection action reported success" else "No injection action succeeded; clipboard fallback only")
+    }
+
+    /** True if a soft keyboard (IME) window is currently showing. */
+    private fun isKeyboardOpen(): Boolean =
+        windows?.any { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD } == true
+
+    private fun setClipboard(text: String) {
+        val clip = ClipData.newPlainText("phonewhisper", text)
+        (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
+    }
+
+    /** Run one injection pass over the current candidates. [clipboardMode] enables
+     *  the paste-based actions (which read the clipboard); when false, only direct
+     *  ACTION_SET_TEXT is attempted. */
+    private fun injectOnce(text: String, clipboardMode: Boolean): Boolean {
+        val candidates = findInjectionCandidates()
+        Log.i(TAG, "Injecting into ${candidates.size} candidate(s), clipboard=$clipboardMode")
+        try {
+            for (candidate in candidates) {
+                if (tryInjectIntoNode(candidate, text, clipboardMode)) return true
+            }
+            return false
+        } finally {
+            candidates.forEach { it.recycle() }
+        }
     }
 
     private fun findInjectionCandidates(): List<AccessibilityNodeInfo> {
@@ -572,25 +639,42 @@ class WhisperAccessibilityService : AccessibilityService() {
         return score
     }
 
-    private fun tryInjectIntoNode(node: AccessibilityNodeInfo, text: String): Boolean {
+    private fun tryInjectIntoNode(node: AccessibilityNodeInfo, text: String, clipboardMode: Boolean): Boolean {
         logNode("Trying node", node)
 
         node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
 
-        findCustomPasteAction(node)?.let { action ->
-            val ok = node.performAction(action.id)
-            Log.i(TAG, "Custom action '${action.label}' (${action.id}) => $ok")
-            if (ok) return true
+        // Paste-based actions read from the clipboard, so only use them when
+        // clipboard mode is active (otherwise they'd paste stale content).
+        if (clipboardMode) {
+            findCustomPasteAction(node)?.let { action ->
+                val ok = node.performAction(action.id)
+                Log.i(TAG, "Custom action '${action.label}' (${action.id}) => $ok")
+                if (ok) return true
+            }
+
+            val pasteOk = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+            Log.i(TAG, "ACTION_PASTE => $pasteOk")
+            if (pasteOk) return true
         }
 
-        val pasteOk = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-        Log.i(TAG, "ACTION_PASTE => $pasteOk")
-        if (pasteOk) return true
-
         if (node.isEditable || node.className?.toString()?.contains("EditText") == true) {
-            val current = node.text?.toString().orEmpty()
-            val start = if (node.textSelectionStart >= 0) node.textSelectionStart else current.length
-            val end = if (node.textSelectionEnd >= 0) node.textSelectionEnd else start
+            // When the field is empty some apps (e.g. Telegram) report their hint
+            // ("Message") as node.text with no hint metadata, so we'd wrongly append
+            // after it. A placeholder has no real cursor (textSelectionStart == -1),
+            // whereas a field with real content exposes a caret position — use that,
+            // plus isShowingHintText / text==hint where available, to detect empty.
+            val raw = node.text?.toString().orEmpty()
+            val hint = node.hintText?.toString()
+            val selStart = node.textSelectionStart
+            val showingHint = node.isShowingHintText ||
+                (!hint.isNullOrEmpty() && raw == hint) ||
+                (raw.isNotEmpty() && selStart < 0)
+            Log.i(TAG, "SET_TEXT: text='$raw' hint='$hint' isShowingHintText=${node.isShowingHintText} " +
+                "sel=${selStart}..${node.textSelectionEnd} showingHint=$showingHint")
+            val current = if (showingHint) "" else raw
+            val start = if (!showingHint && node.textSelectionStart >= 0) node.textSelectionStart else current.length
+            val end = if (!showingHint && node.textSelectionEnd >= 0) node.textSelectionEnd else start
             val replacementStart = minOf(start, end)
             val replacementEnd = maxOf(start, end)
             val updated = current.replaceRange(replacementStart, replacementEnd, text)
