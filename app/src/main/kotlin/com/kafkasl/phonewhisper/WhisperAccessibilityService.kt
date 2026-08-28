@@ -1,6 +1,7 @@
 package com.kafkasl.phonewhisper
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -20,6 +21,7 @@ import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.ProgressBar
@@ -41,6 +43,8 @@ class WhisperAccessibilityService : AccessibilityService() {
         private const val TAP_THRESHOLD_DP = 10
         private const val RING_DP = 56
         private const val FEEDBACK_OFFSET_DP = 64
+        private const val OVERLAY_REFRESH_DELAY_MS = 120L
+        private const val OVERLAY_WATCHDOG_DELAY_MS = 350L
 
         private const val COLOR_IDLE = 0xDD1C1C1E.toInt()
         private const val COLOR_RECORDING = 0xDDEF4444.toInt()
@@ -61,6 +65,13 @@ class WhisperAccessibilityService : AccessibilityService() {
     private var audioRecord: AudioRecord? = null
     private var pcmStream: ByteArrayOutputStream? = null
     private val handler = Handler(Looper.getMainLooper())
+    private val refreshOverlayVisibility = Runnable { updateOverlayVisibility() }
+    private val pollOverlayVisibility = object : Runnable {
+        override fun run() {
+            updateOverlayVisibility()
+            handler.postDelayed(this, OVERLAY_WATCHDOG_DELAY_MS)
+        }
+    }
     private val hideFeedback = Runnable {
         feedbackView?.animate()?.alpha(0f)?.setDuration(180)?.withEndAction {
             feedbackView?.visibility = View.GONE
@@ -76,16 +87,23 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         instance = this
-        showOverlay()
+        enableInteractiveWindowEvents()
+        handler.removeCallbacks(pollOverlayVisibility)
+        handler.post(pollOverlayVisibility)
+        scheduleOverlayVisibilityRefresh(0)
         // Try to load local model in background
         thread { initLocalModel() }
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        scheduleOverlayVisibilityRefresh()
+    }
     override fun onInterrupt() {}
 
     override fun onDestroy() {
         instance = null
+        handler.removeCallbacks(refreshOverlayVisibility)
+        handler.removeCallbacks(pollOverlayVisibility)
         removeOverlay()
         super.onDestroy()
     }
@@ -114,7 +132,56 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     // --- Overlay ---
 
+    private fun enableInteractiveWindowEvents() {
+        val info = serviceInfo
+        info.eventTypes = AccessibilityEvent.TYPE_VIEW_FOCUSED or
+            AccessibilityEvent.TYPE_WINDOWS_CHANGED or
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+        info.flags = info.flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        serviceInfo = info
+    }
+
+    private fun scheduleOverlayVisibilityRefresh(delayMs: Long = OVERLAY_REFRESH_DELAY_MS) {
+        handler.removeCallbacks(refreshOverlayVisibility)
+        handler.postDelayed(refreshOverlayVisibility, delayMs)
+    }
+
+    private fun updateOverlayVisibility() {
+        val keyboardVisible = isInputMethodVisible()
+        val homeVisible = isHomeScreenForeground()
+        val shouldShow = state != State.IDLE || (keyboardVisible && !homeVisible)
+        if (shouldShow) showOverlay() else removeOverlay()
+    }
+
+    private fun isInputMethodVisible(): Boolean =
+        windows?.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } == true
+
+    private fun isHomeScreenForeground(): Boolean =
+        windows
+            ?.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && (it.isActive || it.isFocused) }
+            ?.any { window ->
+                if (isHomeWindowTitle(window.title?.toString().orEmpty())) return@any true
+
+                val root = window.root ?: return@any false
+                try {
+                    isHomePackage(root.packageName?.toString().orEmpty())
+                } finally {
+                    root.recycle()
+                }
+            } == true
+
+    private fun isHomeWindowTitle(title: String): Boolean =
+        title == "Home" || title == "Главный экран"
+
+    private fun isHomePackage(packageName: String): Boolean {
+        val normalized = packageName.lowercase()
+        return normalized.contains("launcher")
+    }
+
     private fun showOverlay() {
+        if (overlayView != null) return
+
         val wm = getSystemService(WINDOW_SERVICE) as WindowManager
         val buttonSize = (BTN_DP * dp).toInt()
         val ringSize = (RING_DP * dp).toInt()
@@ -329,6 +396,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         pcmStream = ByteArrayOutputStream()
         audioRecord!!.startRecording()
         state = State.RECORDING
+        scheduleOverlayVisibilityRefresh(0)
         setBusy(false)
         setAppearance(COLOR_RECORDING)
         startPulse()
@@ -344,6 +412,7 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     private fun stopAndTranscribe() {
         state = State.TRANSCRIBING
+        scheduleOverlayVisibilityRefresh(0)
         stopPulse()
         setAppearance(COLOR_BUSY)
         setBusy(true)
@@ -389,6 +458,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                 handler.post {
                     toast("Local error: ${e.message}")
                     state = State.IDLE
+                    scheduleOverlayVisibilityRefresh(0)
                     setBusy(false)
                     setAppearance(COLOR_IDLE)
                 }
@@ -408,6 +478,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                 handler.post {
                     toast("Error: ${result.error ?: "empty transcript"}")
                     state = State.IDLE
+                    scheduleOverlayVisibilityRefresh(0)
                     setBusy(false)
                     setAppearance(COLOR_IDLE)
                 }
@@ -420,6 +491,7 @@ class WhisperAccessibilityService : AccessibilityService() {
             handler.post {
                 toast("No speech detected")
                 state = State.IDLE
+                scheduleOverlayVisibilityRefresh(0)
                 setBusy(false)
                 setAppearance(COLOR_IDLE)
             }
@@ -435,6 +507,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                     toast("Post-processing needs API key. Using raw text.")
                     injectText(text)
                     state = State.IDLE
+                    scheduleOverlayVisibilityRefresh(0)
                     setBusy(false)
                     setAppearance(COLOR_IDLE)
                 }
@@ -451,6 +524,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                         injectText(text, feedback = "Cleanup failed — raw copied to clipboard", feedbackDurationMs = 3000)
                     }
                     state = State.IDLE
+                    scheduleOverlayVisibilityRefresh(0)
                     setBusy(false)
                     setAppearance(COLOR_IDLE)
                 }
@@ -459,6 +533,7 @@ class WhisperAccessibilityService : AccessibilityService() {
             handler.post {
                 injectText(text)
                 state = State.IDLE
+                scheduleOverlayVisibilityRefresh(0)
                 setBusy(false)
                 setAppearance(COLOR_IDLE)
             }
@@ -468,6 +543,7 @@ class WhisperAccessibilityService : AccessibilityService() {
     private fun reset(msg: String) {
         toast(msg)
         state = State.IDLE
+        scheduleOverlayVisibilityRefresh(0)
         setBusy(false)
         setAppearance(COLOR_IDLE)
     }
