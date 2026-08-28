@@ -12,7 +12,9 @@ It supports:
 
 - **Local on-device transcription** with sherpa-onnx
 - **Cloud transcription** with OpenAI Whisper
+- **OpenAI-compatible transcription endpoints** for custom bridge services
 - **Optional cleanup** with OpenAI to fix punctuation and grammar
+- **Optional clipboard copy** when direct text insertion needs a paste fallback
 
 If you try it and it genuinely saves you time, consider [sponsoring](https://github.com/sponsors/kafkasl)
 
@@ -61,7 +63,7 @@ make adb-install
 3. Tap again to stop
 4. Audio is transcribed locally or in the cloud
 5. The text is inserted into the focused text field
-6. If insertion fails, the text is copied to the clipboard
+6. If `Copy transcript to clipboard` is enabled, the transcript is also copied and paste actions can be used as a fallback
 
 ## Setup
 
@@ -73,8 +75,51 @@ make adb-install
 4. Choose your transcription mode:
    - **Local**: download a model in the app
    - **Cloud**: paste your OpenAI API key
+   - **Custom endpoint**: paste a bearer token and set a compatible transcription base URL
 
 Once setup is done, the floating button is ready.
+
+### Custom transcription endpoint
+
+Cloud transcription can use either the official OpenAI API or a compatible bridge that implements:
+
+```text
+POST /v1/audio/transcriptions
+Authorization: Bearer <token>
+multipart/form-data:
+  model=whisper-1
+  file=audio.wav
+```
+
+The response must include a top-level `text` field:
+
+```json
+{"text":"transcribed text"}
+```
+
+In the app:
+
+1. Enable **Use cloud transcription**.
+2. Set **API key / bearer token** to the token expected by the endpoint.
+3. Set **Transcription API URL** to the base URL, for example `http://whisper.example.test/v1`.
+
+URL handling:
+
+- `https://api.openai.com/v1` sends to `https://api.openai.com/v1/audio/transcriptions`.
+- `http://host:port/v1` sends to `http://host:port/v1/audio/transcriptions`.
+- `http://host:port` sends to `http://host:port/v1/audio/transcriptions`.
+
+Do not commit real bearer tokens to the repository. Store them only in the app settings or in your private server environment.
+
+### Clipboard behavior
+
+By default, `Copy transcript to clipboard` is off. In this mode Phone Whisper tries direct `ACTION_SET_TEXT` insertion and does not replace the Android clipboard.
+
+When `Copy transcript to clipboard` is on, the app also writes the transcript to the clipboard and allows paste actions as a fallback for apps that do not support direct text setting.
+
+The app treats an editable field whose visible text equals its hint text as empty. This prevents placeholders such as `Message` or `Сообщение` from being prepended to dictated text.
+
+Successful direct insertion does not show an `Inserted` overlay. The app only shows feedback for explicit clipboard copy, insertion failure, or cleanup fallback.
 
 ## Why does it need Accessibility?
 
@@ -121,6 +166,36 @@ make test        # run unit tests
 make adb-install # build + install via ADB
 make clean       # clean build artifacts
 ```
+
+### Android diagnostics
+
+Phone Whisper writes timing diagnostics to Logcat with the tag `PhoneWhisper`.
+
+```bash
+adb logcat -c
+adb logcat -v time -s PhoneWhisper
+```
+
+Each dictation attempt gets a short `trace=<id>` value. Use that value to follow one request across recording, WAV encoding, HTTP upload, server response, post-processing, and text injection.
+
+Useful stages include:
+
+- `record_start_requested`
+- `record_stopped`
+- `wav_encode_start`
+- `wav_encode_end`
+- `api_transcribe_start`
+- `client_build_start`
+- `http_request_headers_start`
+- `http_request_body_end`
+- `http_response_headers_start`
+- `client_response_body`
+- `api_transcribe_callback`
+- `inject_start`
+- `inject_action_set_text`
+- `inject_end`
+
+For a custom bridge, compare Android `trace=<id>` timestamps with the bridge request logs. A server-side `401` with `hasAuthorizationHeader=false` means the incoming request reached the bridge without an `Authorization` header.
 
 ## App compatibility
 

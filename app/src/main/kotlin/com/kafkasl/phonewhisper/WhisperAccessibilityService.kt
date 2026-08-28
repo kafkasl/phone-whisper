@@ -13,6 +13,7 @@ import android.media.MediaRecorder
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
@@ -26,6 +27,7 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import java.io.ByteArrayOutputStream
+import java.util.UUID
 import kotlin.concurrent.thread
 import kotlin.math.abs
 
@@ -60,6 +62,8 @@ class WhisperAccessibilityService : AccessibilityService() {
     private var feedbackLayoutParams: WindowManager.LayoutParams? = null
     private var audioRecord: AudioRecord? = null
     private var pcmStream: ByteArrayOutputStream? = null
+    private var activeTraceId: String = ""
+    private var recordingStartedAtMs: Long = 0L
     private val handler = Handler(Looper.getMainLooper())
     private val hideFeedback = Runnable {
         feedbackView?.animate()?.alpha(0f)?.setDuration(180)?.withEndAction {
@@ -311,27 +315,37 @@ class WhisperAccessibilityService : AccessibilityService() {
     }
 
     private fun startRecording() {
+        val traceId = newTraceId()
+        activeTraceId = traceId
+        trace(traceId, "record_start_requested")
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
             != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            trace(traceId, "record_start_rejected", "missing_audio_permission")
             toast("Grant audio permission in Phone Whisper app"); return
         }
 
         val bufSize = AudioRecord.getMinBufferSize(
             SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
         )
+        trace(traceId, "audio_buffer_size", "bytes=$bufSize")
         audioRecord = try {
             AudioRecord(
                 MediaRecorder.AudioSource.MIC, SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufSize
             )
-        } catch (_: SecurityException) { toast("Audio permission denied"); return }
+        } catch (e: SecurityException) {
+            trace(traceId, "record_start_security_error", e.message ?: "denied")
+            toast("Audio permission denied"); return
+        }
 
         pcmStream = ByteArrayOutputStream()
         audioRecord!!.startRecording()
+        recordingStartedAtMs = SystemClock.elapsedRealtime()
         state = State.RECORDING
         setBusy(false)
         setAppearance(COLOR_RECORDING)
         startPulse()
+        trace(traceId, "record_started")
 
         thread {
             val buf = ByteArray(bufSize)
@@ -343,6 +357,9 @@ class WhisperAccessibilityService : AccessibilityService() {
     }
 
     private fun stopAndTranscribe() {
+        val traceId = activeTraceId.ifBlank { newTraceId().also { activeTraceId = it } }
+        val recordDurationMs = if (recordingStartedAtMs > 0) SystemClock.elapsedRealtime() - recordingStartedAtMs else 0L
+        trace(traceId, "record_stop_requested", "recordDurationMs=$recordDurationMs")
         state = State.TRANSCRIBING
         stopPulse()
         setAppearance(COLOR_BUSY)
@@ -354,22 +371,25 @@ class WhisperAccessibilityService : AccessibilityService() {
 
         val pcm = pcmStream?.toByteArray() ?: ByteArray(0)
         pcmStream = null
+        trace(traceId, "record_stopped", "pcmBytes=${pcm.size} recordDurationMs=$recordDurationMs")
 
         if (pcm.isEmpty()) { reset("No audio captured"); return }
 
         val useLocal = prefs().getBoolean("use_local", true)
         val local = localTranscriber
+        trace(traceId, "transcription_route", "useLocal=$useLocal hasLocal=${local != null}")
 
         if (useLocal && local != null) {
-            transcribeLocal(pcm, local)
+            transcribeLocal(pcm, local, traceId)
         } else {
-            transcribeApi(pcm)
+            transcribeApi(pcm, traceId)
         }
     }
 
-    private fun transcribeLocal(pcm: ByteArray, transcriber: LocalTranscriber) {
+    private fun transcribeLocal(pcm: ByteArray, transcriber: LocalTranscriber, traceId: String) {
         thread {
             try {
+                trace(traceId, "local_prepare_start", "pcmBytes=${pcm.size}")
                 // Convert 16-bit PCM bytes to float samples
                 val samples = FloatArray(pcm.size / 2)
                 for (i in samples.indices) {
@@ -377,15 +397,17 @@ class WhisperAccessibilityService : AccessibilityService() {
                     val hi = pcm[i * 2 + 1].toInt()
                     samples[i] = ((hi shl 8) or lo).toShort().toFloat() / 32768f
                 }
+                trace(traceId, "local_prepare_end", "samples=${samples.size}")
 
                 val t0 = System.currentTimeMillis()
                 val text = transcriber.transcribe(samples, SAMPLE_RATE)
                 val ms = System.currentTimeMillis() - t0
-                Log.i(TAG, "Local transcription: ${ms}ms, ${samples.size / SAMPLE_RATE}s audio")
+                trace(traceId, "local_transcribe_end", "elapsedMs=$ms audioSeconds=${samples.size / SAMPLE_RATE}")
 
-                handleTranscriptionResult(text)
+                handleTranscriptionResult(text, traceId)
             } catch (e: Exception) {
-                Log.e(TAG, "Local transcription failed", e)
+                trace(traceId, "local_transcribe_failed", e.message ?: "unknown")
+                Log.e(TAG, "trace=$traceId Local transcription failed", e)
                 handler.post {
                     toast("Local error: ${e.message}")
                     state = State.IDLE
@@ -396,14 +418,24 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun transcribeApi(pcm: ByteArray) {
+    private fun transcribeApi(pcm: ByteArray, traceId: String) {
+        val wavStarted = SystemClock.elapsedRealtime()
+        trace(traceId, "wav_encode_start", "pcmBytes=${pcm.size}")
         val wav = WavWriter.encode(pcm)
+        trace(traceId, "wav_encode_end", "elapsedMs=${SystemClock.elapsedRealtime() - wavStarted} wavBytes=${wav.size}")
         val apiKey = prefs().getString("api_key", "") ?: ""
-        if (apiKey.isBlank()) { reset("Set API key in Phone Whisper app"); return }
+        val transcriptionBaseUrl = prefs().getString("transcription_base_url", "") ?: ""
+        if (apiKey.isBlank() && transcriptionBaseUrl.isBlank()) {
+            trace(traceId, "api_transcribe_rejected", "missing_api_key_and_url")
+            reset("Set API key or transcription URL in Phone Whisper app")
+            return
+        }
 
-        TranscriberClient.transcribe(wav, apiKey) { result ->
+        trace(traceId, "api_transcribe_start", "url=${TranscriberClient.transcriptionUrl(transcriptionBaseUrl)} wavBytes=${wav.size} hasToken=${apiKey.isNotBlank()}")
+        TranscriberClient.transcribe(wav, apiKey, transcriptionBaseUrl, traceId) { result ->
+            trace(traceId, "api_transcribe_callback", "status=${result.statusCode} elapsedMs=${result.elapsedMs} hasText=${!result.text.isNullOrBlank()} error=${result.error ?: ""}")
             if (result.text != null && result.text.isNotBlank()) {
-                handleTranscriptionResult(result.text)
+                handleTranscriptionResult(result.text, traceId)
             } else {
                 handler.post {
                     toast("Error: ${result.error ?: "empty transcript"}")
@@ -415,7 +447,8 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun handleTranscriptionResult(text: String?) {
+    private fun handleTranscriptionResult(text: String?, traceId: String = activeTraceId) {
+        trace(traceId, "transcription_result_received", "chars=${text?.length ?: 0}")
         if (text.isNullOrBlank()) {
             handler.post {
                 toast("No speech detected")
@@ -433,7 +466,8 @@ class WhisperAccessibilityService : AccessibilityService() {
             if (apiKey.isBlank()) {
                 handler.post {
                     toast("Post-processing needs API key. Using raw text.")
-                    injectText(text)
+                    trace(traceId, "postprocess_skipped", "missing_api_key")
+                    injectText(text, traceId = traceId)
                     state = State.IDLE
                     setBusy(false)
                     setAppearance(COLOR_IDLE)
@@ -442,13 +476,16 @@ class WhisperAccessibilityService : AccessibilityService() {
             }
 
             val prompt = prefs().getString("post_processing_prompt", PostProcessor.DEFAULT_PROMPT) ?: PostProcessor.DEFAULT_PROMPT
+            trace(traceId, "postprocess_start", "promptChars=${prompt.length}")
             
             PostProcessor.process(text, prompt, apiKey) { result ->
                 handler.post {
                     if (result.text != null && result.text.isNotBlank()) {
-                        injectText(result.text)
+                        trace(traceId, "postprocess_success", "chars=${result.text.length}")
+                        injectText(result.text, traceId = traceId)
                     } else {
-                        injectText(text, feedback = "Cleanup failed — raw copied to clipboard", feedbackDurationMs = 3000)
+                        trace(traceId, "postprocess_failed", result.error ?: "empty")
+                        injectText(text, feedback = "Cleanup failed - raw text used", feedbackDurationMs = 3000, traceId = traceId)
                     }
                     state = State.IDLE
                     setBusy(false)
@@ -457,7 +494,7 @@ class WhisperAccessibilityService : AccessibilityService() {
             }
         } else {
             handler.post {
-                injectText(text)
+                injectText(text, traceId = traceId)
                 state = State.IDLE
                 setBusy(false)
                 setAppearance(COLOR_IDLE)
@@ -476,20 +513,25 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     private fun injectText(
         text: String,
-        feedback: String? = "Copied to clipboard",
-        feedbackDurationMs: Long = 2000
+        feedback: String? = null,
+        feedbackDurationMs: Long = 2000,
+        traceId: String = activeTraceId
     ) {
-        val clip = ClipData.newPlainText("phonewhisper", text)
-        (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
-        feedback?.let { showFeedback(it, feedbackDurationMs) }
+        val copyToClipboard = prefs().getBoolean("copy_transcript_to_clipboard", false)
+        trace(traceId, "inject_start", "chars=${text.length} copyToClipboard=$copyToClipboard")
+        if (copyToClipboard) {
+            val clip = ClipData.newPlainText("phonewhisper", text)
+            (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
+            trace(traceId, "clipboard_set", "chars=${text.length}")
+        }
 
         val candidates = findInjectionCandidates()
-        Log.i(TAG, "Injecting text into ${candidates.size} candidate node(s)")
+        trace(traceId, "inject_candidates", "count=${candidates.size}")
 
         var injected = false
         try {
             for (candidate in candidates) {
-                if (tryInjectIntoNode(candidate, text)) {
+                if (tryInjectIntoNode(candidate, text, allowPaste = copyToClipboard, traceId = traceId)) {
                     injected = true
                     break
                 }
@@ -498,7 +540,13 @@ class WhisperAccessibilityService : AccessibilityService() {
             candidates.forEach { it.recycle() }
         }
 
-        Log.i(TAG, if (injected) "Text injection action reported success" else "No injection action succeeded; clipboard fallback only")
+        val finalFeedback = feedback ?: when {
+            copyToClipboard -> "Copied to clipboard"
+            !injected -> "Could not insert"
+            else -> null
+        }
+        finalFeedback?.let { showFeedback(it, feedbackDurationMs) }
+        trace(traceId, "inject_end", "injected=$injected copyToClipboard=$copyToClipboard")
     }
 
     private fun findInjectionCandidates(): List<AccessibilityNodeInfo> {
@@ -572,28 +620,41 @@ class WhisperAccessibilityService : AccessibilityService() {
         return score
     }
 
-    private fun tryInjectIntoNode(node: AccessibilityNodeInfo, text: String): Boolean {
-        logNode("Trying node", node)
+    private fun tryInjectIntoNode(
+        node: AccessibilityNodeInfo,
+        text: String,
+        allowPaste: Boolean,
+        traceId: String
+    ): Boolean {
+        logNode("Trying node", node, traceId)
 
         node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
 
-        findCustomPasteAction(node)?.let { action ->
-            val ok = node.performAction(action.id)
-            Log.i(TAG, "Custom action '${action.label}' (${action.id}) => $ok")
-            if (ok) return true
+        if (allowPaste) {
+            findCustomPasteAction(node)?.let { action ->
+                val ok = node.performAction(action.id)
+                trace(traceId, "inject_custom_paste", "label=${action.label} id=${action.id} ok=$ok")
+                if (ok) return true
+            }
+
+            val pasteOk = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+            trace(traceId, "inject_action_paste", "ok=$pasteOk")
+            if (pasteOk) return true
         }
 
-        val pasteOk = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-        Log.i(TAG, "ACTION_PASTE => $pasteOk")
-        if (pasteOk) return true
-
         if (node.isEditable || node.className?.toString()?.contains("EditText") == true) {
-            val current = node.text?.toString().orEmpty()
-            val start = if (node.textSelectionStart >= 0) node.textSelectionStart else current.length
-            val end = if (node.textSelectionEnd >= 0) node.textSelectionEnd else start
-            val replacementStart = minOf(start, end)
-            val replacementEnd = maxOf(start, end)
-            val updated = current.replaceRange(replacementStart, replacementEnd, text)
+            val current = editableText(node)
+            val hasSelection = node.textSelectionStart >= 0 &&
+                node.textSelectionEnd >= 0 &&
+                node.textSelectionStart <= current.length &&
+                node.textSelectionEnd <= current.length
+            val updated = if (hasSelection && current.isNotEmpty()) {
+                val replacementStart = minOf(node.textSelectionStart, node.textSelectionEnd)
+                val replacementEnd = maxOf(node.textSelectionStart, node.textSelectionEnd)
+                current.replaceRange(replacementStart, replacementEnd, text)
+            } else {
+                text
+            }
             val args = Bundle().apply {
                 putCharSequence(
                     AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
@@ -601,7 +662,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                 )
             }
             val setTextOk = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-            Log.i(TAG, "ACTION_SET_TEXT => $setTextOk")
+            trace(traceId, "inject_action_set_text", "ok=$setTextOk currentChars=${current.length} hadSelection=$hasSelection")
             if (setTextOk) return true
         }
 
@@ -613,14 +674,26 @@ class WhisperAccessibilityService : AccessibilityService() {
             action.label?.toString()?.contains("paste", ignoreCase = true) == true
         }
 
-    private fun logNode(prefix: String, node: AccessibilityNodeInfo) {
+    private fun editableText(node: AccessibilityNodeInfo): String {
+        val raw = node.text?.toString().orEmpty()
+        val hint = node.hintText?.toString().orEmpty()
+        return if (hint.isNotBlank() && raw == hint) "" else raw
+    }
+
+    private fun logNode(prefix: String, node: AccessibilityNodeInfo, traceId: String) {
         val actions = node.actionList.joinToString { action ->
             action.label?.toString() ?: action.id.toString()
         }
         Log.i(
             TAG,
-            "$prefix package=${node.packageName} class=${node.className} focused=${node.isFocused} editable=${node.isEditable} text=${node.text} desc=${node.contentDescription} actions=[$actions]"
+            "trace=$traceId $prefix package=${node.packageName} class=${node.className} focused=${node.isFocused} editable=${node.isEditable} text=${node.text} desc=${node.contentDescription} actions=[$actions]"
         )
+    }
+
+    private fun newTraceId(): String = UUID.randomUUID().toString().take(8)
+
+    private fun trace(traceId: String, stage: String, details: String = "") {
+        Log.i(TAG, "trace=$traceId stage=$stage $details")
     }
 
     private fun prefs() = getSharedPreferences("phonewhisper", MODE_PRIVATE)
