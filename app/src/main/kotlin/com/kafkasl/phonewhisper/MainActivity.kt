@@ -28,6 +28,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var audioRowSub: TextView
     private lateinit var accRowSub: TextView
     private lateinit var keyRowSub: TextView
+    private lateinit var endpointRowSub: TextView
     private lateinit var promptRowSub: TextView
     private lateinit var promptRow: LinearLayout
     private lateinit var modelContainer: LinearLayout
@@ -91,7 +92,7 @@ class MainActivity : AppCompatActivity() {
             isChecked = isCloud
             isClickable = false
         }
-        val cloudRow = settingsRow("Use cloud transcription", "Requires OpenAI API key", cloudSwitch) {
+        val cloudRow = settingsRow("Use cloud transcription", "OpenAI or custom compatible API", cloudSwitch) {
             val newCloud = !cloudSwitch.isChecked
             prefs().edit().putBoolean("use_local", !newCloud).apply()
             cloudSwitch.isChecked = newCloud
@@ -134,9 +135,13 @@ class MainActivity : AppCompatActivity() {
         // --- Settings Section ---
         root.addView(sectionHeader("Settings"))
         
-        val keyRow = settingsRow("OpenAI API Key", "Tap to set") { promptApiKey() }
+        val keyRow = settingsRow("API key / bearer token", "Tap to set") { promptApiKey() }
         keyRowSub = keyRow.findViewWithTag("subtitle")
         root.addView(keyRow)
+
+        val endpointRow = settingsRow("Transcription API URL", "Official OpenAI") { promptTranscriptionBaseUrl() }
+        endpointRowSub = endpointRow.findViewWithTag("subtitle")
+        root.addView(endpointRow)
 
         setContentView(ScrollView(this).apply {
             setBackgroundColor(attrColor(android.R.attr.colorBackground))
@@ -309,6 +314,7 @@ class MainActivity : AppCompatActivity() {
         val useLocal = prefs().getBoolean("use_local", true)
         val usePostProcessing = prefs().getBoolean("use_post_processing", false)
         val hasKey = !prefs().getString("api_key", "").isNullOrBlank()
+        val useCustomTranscriptionEndpoint = transcriptionBaseUrl().isNotBlank()
         val hasModel = LocalTranscriber.availableModels(this).isNotEmpty()
 
         audioRowSub.text = if (audio) "Granted" else "Tap to grant permission"
@@ -319,9 +325,11 @@ class MainActivity : AppCompatActivity() {
         promptRow.visibility = if (usePostProcessing) View.VISIBLE else View.GONE
 
         val apiKey = prefs().getString("api_key", "") ?: ""
-        keyRowSub.text = if (apiKey.isBlank()) "Tap to set" 
-                         else if (apiKey.length > 7) "sk-...${apiKey.takeLast(4)}" 
-                         else "sk-...***"
+        keyRowSub.text = if (apiKey.isBlank()) "Tap to set"
+                         else if (apiKey.length > 7) "...${apiKey.takeLast(4)}"
+                         else "***"
+
+        endpointRowSub.text = transcriptionBaseUrl().ifBlank { "Official OpenAI" }
 
         val prompt = currentPrompt()
         promptRowSub.text = prompt
@@ -334,7 +342,7 @@ class MainActivity : AppCompatActivity() {
 
         // Ready logic
         val localReady = useLocal && hasModel
-        val cloudReady = !useLocal && hasKey
+        val cloudReady = !useLocal && (hasKey || useCustomTranscriptionEndpoint)
         val postReady = !usePostProcessing || hasKey
         val ready = audio && acc && (localReady || cloudReady) && postReady
 
@@ -355,6 +363,29 @@ class MainActivity : AppCompatActivity() {
             .setView(input.apply { setPadding(dp(24), dp(8), dp(24), dp(8)) })
             .setPositiveButton("Save") { _, _ ->
                 prefs().edit().putString("api_key", input.text.toString().trim()).apply()
+                refresh()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun promptTranscriptionBaseUrl() {
+        val input = EditText(this).apply {
+            hint = "https://api.openai.com/v1"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            setSingleLine(true)
+            setText(transcriptionBaseUrl())
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Transcription API URL")
+            .setMessage("Leave blank for official OpenAI. Use an OpenAI-compatible base URL, for example http://100.68.233.33:6022/v1")
+            .setView(input.apply { setPadding(dp(24), dp(8), dp(24), dp(8)) })
+            .setPositiveButton("Save") { _, _ ->
+                prefs().edit().putString("transcription_base_url", input.text.toString().trim()).apply()
+                refresh()
+            }
+            .setNeutralButton("Use default") { _, _ ->
+                prefs().edit().remove("transcription_base_url").apply()
                 refresh()
             }
             .setNegativeButton("Cancel", null)
@@ -441,6 +472,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun currentPrompt() = prefs().getString("post_processing_prompt", PostProcessor.DEFAULT_PROMPT) ?: PostProcessor.DEFAULT_PROMPT
     private fun customPrompt() = prefs().getString("custom_post_processing_prompt", PostProcessor.DEFAULT_PROMPT) ?: PostProcessor.DEFAULT_PROMPT
+    private fun transcriptionBaseUrl() = prefs().getString("transcription_base_url", "") ?: ""
 
     private fun customPromptSummary(): String {
         val prompt = customPrompt()
