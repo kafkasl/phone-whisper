@@ -16,6 +16,7 @@ import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.widget.doAfterTextChanged
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.materialswitch.MaterialSwitch
@@ -28,6 +29,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var audioRowSub: TextView
     private lateinit var accRowSub: TextView
     private lateinit var keyRowSub: TextView
+    private lateinit var orKeyRowSub: TextView
+    private lateinit var cloudContainer: LinearLayout
+    private lateinit var transProviderSub: TextView
+    private lateinit var transModelRow: LinearLayout
+    private lateinit var transModelSub: TextView
+    private lateinit var ppProviderSub: TextView
+    private lateinit var ppModelRow: LinearLayout
+    private lateinit var ppModelSub: TextView
     private lateinit var promptRowSub: TextView
     private lateinit var promptRow: LinearLayout
     private lateinit var modelContainer: LinearLayout
@@ -91,13 +100,29 @@ class MainActivity : AppCompatActivity() {
             isChecked = isCloud
             isClickable = false
         }
-        val cloudRow = settingsRow("Use cloud transcription", "Requires OpenAI API key", cloudSwitch) {
+        val cloudRow = settingsRow("Use cloud transcription", "OpenAI or OpenRouter, requires API key", cloudSwitch) {
             val newCloud = !cloudSwitch.isChecked
             prefs().edit().putBoolean("use_local", !newCloud).apply()
             cloudSwitch.isChecked = newCloud
             refresh()
         }
         root.addView(cloudRow)
+
+        cloudContainer = vertical(0)
+        val transProviderRow = settingsRow("Transcription provider", "") {
+            chooseProvider("transcription_provider", "Transcription provider")
+        }
+        transProviderSub = transProviderRow.findViewWithTag("subtitle")
+        cloudContainer.addView(transProviderRow)
+        transModelRow = settingsRow("Transcription model", "") {
+            pickOpenRouterModel(
+                "openrouter_transcription_model", "Transcription model", "transcription",
+                DEFAULT_OPENROUTER_TRANSCRIPTION_MODEL, OPENROUTER_TRANSCRIPTION_PRESETS
+            )
+        }
+        transModelSub = transModelRow.findViewWithTag("subtitle")
+        cloudContainer.addView(transModelRow)
+        root.addView(cloudContainer)
 
         // Local Models section
         modelContainer = vertical(0)
@@ -113,7 +138,7 @@ class MainActivity : AppCompatActivity() {
             isChecked = isPostProcessing
             isClickable = false
         }
-        val postProcessRow = settingsRow("Cleanup transcript", "Uses OpenAI Chat API to fix grammar and punctuation", postProcessSwitch) {
+        val postProcessRow = settingsRow("Cleanup transcript", "Uses an LLM to fix grammar and punctuation", postProcessSwitch) {
             val newVal = !postProcessSwitch.isChecked
             prefs().edit().putBoolean("use_post_processing", newVal).apply()
             postProcessSwitch.isChecked = newVal
@@ -122,6 +147,19 @@ class MainActivity : AppCompatActivity() {
         root.addView(postProcessRow)
 
         promptContainer = vertical(0)
+        val ppProviderRow = settingsRow("Cleanup provider", "") {
+            chooseProvider("post_processing_provider", "Cleanup provider")
+        }
+        ppProviderSub = ppProviderRow.findViewWithTag("subtitle")
+        promptContainer.addView(ppProviderRow)
+        ppModelRow = settingsRow("Cleanup model", "") {
+            pickOpenRouterModel(
+                "openrouter_post_processing_model", "Cleanup model", "text",
+                DEFAULT_OPENROUTER_POST_PROCESSING_MODEL, OPENROUTER_POST_PROCESSING_PRESETS
+            )
+        }
+        ppModelSub = ppModelRow.findViewWithTag("subtitle")
+        promptContainer.addView(ppModelRow)
         for (preset in promptPresets()) promptContainer.addView(buildPromptRow(preset))
         root.addView(promptContainer)
 
@@ -134,9 +172,13 @@ class MainActivity : AppCompatActivity() {
         // --- Settings Section ---
         root.addView(sectionHeader("Settings"))
         
-        val keyRow = settingsRow("OpenAI API Key", "Tap to set") { promptApiKey() }
+        val keyRow = settingsRow("OpenAI API Key", "Tap to set") { promptApiKey(CloudProvider.OPENAI, "sk-...") }
         keyRowSub = keyRow.findViewWithTag("subtitle")
         root.addView(keyRow)
+
+        val orKeyRow = settingsRow("OpenRouter API Key", "Tap to set") { promptApiKey(CloudProvider.OPENROUTER, "sk-or-...") }
+        orKeyRowSub = orKeyRow.findViewWithTag("subtitle")
+        root.addView(orKeyRow)
 
         setContentView(ScrollView(this).apply {
             setBackgroundColor(attrColor(android.R.attr.colorBackground))
@@ -308,20 +350,26 @@ class MainActivity : AppCompatActivity() {
         val acc = WhisperAccessibilityService.instance != null
         val useLocal = prefs().getBoolean("use_local", true)
         val usePostProcessing = prefs().getBoolean("use_post_processing", false)
-        val hasKey = !prefs().getString("api_key", "").isNullOrBlank()
+        val transTarget = prefs().transcriptionTarget()
+        val ppTarget = prefs().postProcessingTarget()
         val hasModel = LocalTranscriber.availableModels(this).isNotEmpty()
 
         audioRowSub.text = if (audio) "Granted" else "Tap to grant permission"
         accRowSub.text = if (acc) "Enabled" else "Tap to enable in settings"
 
         modelContainer.visibility = if (useLocal) View.VISIBLE else View.GONE
+        cloudContainer.visibility = if (useLocal) View.GONE else View.VISIBLE
+        transProviderSub.text = transTarget.provider.label
+        transModelRow.visibility = if (transTarget.provider == CloudProvider.OPENROUTER) View.VISIBLE else View.GONE
+        transModelSub.text = transTarget.model
+        ppProviderSub.text = ppTarget.provider.label
+        ppModelRow.visibility = if (ppTarget.provider == CloudProvider.OPENROUTER) View.VISIBLE else View.GONE
+        ppModelSub.text = ppTarget.model
         promptContainer.visibility = if (usePostProcessing) View.VISIBLE else View.GONE
         promptRow.visibility = if (usePostProcessing) View.VISIBLE else View.GONE
 
-        val apiKey = prefs().getString("api_key", "") ?: ""
-        keyRowSub.text = if (apiKey.isBlank()) "Tap to set" 
-                         else if (apiKey.length > 7) "sk-...${apiKey.takeLast(4)}" 
-                         else "sk-...***"
+        keyRowSub.text = maskedKey(CloudProvider.OPENAI)
+        orKeyRowSub.text = maskedKey(CloudProvider.OPENROUTER)
 
         val prompt = currentPrompt()
         promptRowSub.text = prompt
@@ -334,8 +382,8 @@ class MainActivity : AppCompatActivity() {
 
         // Ready logic
         val localReady = useLocal && hasModel
-        val cloudReady = !useLocal && hasKey
-        val postReady = !usePostProcessing || hasKey
+        val cloudReady = !useLocal && transTarget.apiKey.isNotBlank()
+        val postReady = !usePostProcessing || ppTarget.apiKey.isNotBlank()
         val ready = audio && acc && (localReady || cloudReady) && postReady
 
         statusSubtitle.text = if (ready) "Ready — tap the overlay dot to dictate" else "Setup required"
@@ -345,16 +393,102 @@ class MainActivity : AppCompatActivity() {
         refreshPromptRows()
     }
 
-    private fun promptApiKey() {
+    private fun maskedKey(provider: CloudProvider): String {
+        val key = prefs().getString(provider.keyPref, "") ?: ""
+        return if (key.isBlank()) "Tap to set"
+               else if (key.length > 7) "...${key.takeLast(4)}"
+               else "...***"
+    }
+
+    private fun promptApiKey(provider: CloudProvider, hint: String) {
         val input = EditText(this).apply {
-            hint = "sk-..."
-            setText(prefs().getString("api_key", ""))
+            this.hint = hint
+            setText(prefs().getString(provider.keyPref, ""))
         }
         android.app.AlertDialog.Builder(this)
-            .setTitle("OpenAI API Key")
+            .setTitle("${provider.label} API Key")
             .setView(input.apply { setPadding(dp(24), dp(8), dp(24), dp(8)) })
             .setPositiveButton("Save") { _, _ ->
-                prefs().edit().putString("api_key", input.text.toString().trim()).apply()
+                prefs().edit().putString(provider.keyPref, input.text.toString().trim()).apply()
+                refresh()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun chooseProvider(prefKey: String, title: String) {
+        val providers = CloudProvider.entries
+        val current = CloudProvider.from(prefs().getString(prefKey, null))
+        android.app.AlertDialog.Builder(this)
+            .setTitle(title)
+            .setSingleChoiceItems(providers.map { it.label }.toTypedArray(), providers.indexOf(current)) { dialog, which ->
+                prefs().edit().putString(prefKey, providers[which].prefValue).apply()
+                dialog.dismiss()
+                refresh()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** Free-text model ID with a filterable list: presets first, replaced by OpenRouter's live model list once loaded. */
+    private fun pickOpenRouterModel(
+        prefKey: String, title: String, outputModality: String, default: String, presets: List<String>
+    ) {
+        var allModels = presets
+        val input = EditText(this).apply {
+            hint = "provider/model"
+            isSingleLine = true
+            setText(prefs().getString(prefKey, null)?.takeIf { it.isNotBlank() } ?: default)
+        }
+        val status = TextView(this).apply {
+            text = "Loading models from OpenRouter..."
+            textSize = 14f
+            setTextColor(attrColor(android.R.attr.textColorSecondary))
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        val adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, presets.toMutableList())
+        val list = ListView(this).apply {
+            this.adapter = adapter
+            layoutParams = LinearLayout.LayoutParams(LP_MATCH, dp(300))
+        }
+
+        // Only filter once the user edits the field, so the full list shows when the dialog opens.
+        var edited = false
+        fun applyFilter() {
+            val query = if (edited) input.text.toString().trim() else ""
+            val matches = allModels.filter { it.contains(query, ignoreCase = true) }
+            adapter.clear()
+            adapter.addAll(matches.ifEmpty { allModels })
+        }
+
+        list.setOnItemClickListener { _, _, pos, _ ->
+            input.setText(adapter.getItem(pos))
+            input.setSelection(input.text.length)
+        }
+        input.doAfterTextChanged { edited = true; applyFilter() }
+
+        OpenRouter.listModels(outputModality) { models, error ->
+            runOnUiThread {
+                if (!models.isNullOrEmpty()) {
+                    allModels = models
+                    status.visibility = View.GONE
+                    applyFilter()
+                } else {
+                    status.text = "Could not load model list (${error ?: "empty"}). Enter a model ID."
+                }
+            }
+        }
+
+        android.app.AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(vertical(dp(24), dp(8)).apply {
+                addView(input)
+                addView(status)
+                addView(list)
+            })
+            .setPositiveButton("Save") { _, _ ->
+                val model = input.text.toString().trim().ifBlank { default }
+                prefs().edit().putString(prefKey, model).apply()
                 refresh()
             }
             .setNegativeButton("Cancel", null)

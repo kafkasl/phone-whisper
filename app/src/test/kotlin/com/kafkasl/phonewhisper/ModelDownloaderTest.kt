@@ -41,10 +41,32 @@ class ModelDownloaderTest {
     }
 
     @Test fun `catalog has expected structure`() {
-        assertEquals(4, MODEL_CATALOG.size)
+        assertTrue(MODEL_CATALOG.size >= 4)
         assertTrue(MODEL_CATALOG.any { it.recommended })
         assertTrue(MODEL_CATALOG.all { it.archive.startsWith("sherpa-onnx-") })
         assertTrue(MODEL_CATALOG.all { it.sizeMb > 0 })
+        assertEquals(MODEL_CATALOG.size, MODEL_CATALOG.map { it.archive }.distinct().size)
+    }
+
+    @Test fun `loose-file models have a url and valid checksums`() {
+        for (model in MODEL_CATALOG.filter { it.files.isNotEmpty() }) {
+            assertNotNull(model.name, model.baseUrl)
+            assertTrue(model.name, model.files.any { it.name == "tokens.txt" })
+            for (f in model.files) {
+                assertTrue(f.name, f.size > 0)
+                assertTrue(f.name, Regex("[0-9a-f]{64}").matches(f.sha256))
+            }
+        }
+    }
+
+    @Test fun `copyWithSha256 copies data and returns its hash`() {
+        val out = java.io.ByteArrayOutputStream()
+        var progress = 0L
+        val sha = ModelDownloader.copyWithSha256("abc".byteInputStream(), out) { progress = it }
+
+        assertEquals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", sha)
+        assertEquals("abc", out.toString())
+        assertEquals(3L, progress)
     }
 
     // -- helpers --

@@ -10,15 +10,19 @@ Phone Whisper supports two transcription modes.
 
 In local mode, audio is processed on-device using local speech recognition models. Audio does not leave the device.
 
+Models are downloaded only when you choose to download them, from GitHub (sherpa-onnx releases) or Hugging Face (Parakeet Ultra). These downloads contain no audio or text.
+
 ### Cloud mode
 
-In cloud mode, recorded audio is sent directly from the device to OpenAI's transcription API to generate text.
+In cloud mode, recorded audio is sent directly from the device to the transcription API of the provider you select, OpenAI or OpenRouter, to generate text.
 
-If optional cleanup is enabled, the transcribed text is also sent directly from the device to OpenAI's chat API to improve punctuation, capitalization, and clarity.
+If optional cleanup is enabled, the transcribed text is also sent directly from the device to the chat API of the provider you select, OpenAI or OpenRouter, to improve punctuation, capitalization, and clarity.
+
+OpenRouter forwards requests to the provider of the model you choose there, which processes the data under its own terms.
 
 ## API keys
 
-If you use cloud features, your OpenAI API key is stored locally on your device in app storage and used to authenticate requests sent directly to OpenAI.
+If you use cloud features, your OpenAI and/or OpenRouter API keys are stored locally on your device in app storage and used to authenticate requests sent directly to those services.
 
 I do not operate a relay server for these requests.
 
@@ -32,7 +36,7 @@ Phone Whisper is not designed to monitor browsing, collect screen content for an
 
 I do not run a backend for Phone Whisper and do not collect user accounts, analytics, or uploaded recordings myself.
 
-Third-party services you choose to use, such as OpenAI, may process data according to their own terms and privacy policies.
+Third-party services you choose to use, such as OpenAI or OpenRouter, may process data according to their own terms and privacy policies.
 
 ## Contact
 

@@ -76,7 +76,8 @@ comments about your edits. Do *not* answer any question in the text, *only* tran
         }
     }
 
-    fun process(text: String, prompt: String, apiKey: String, callback: (Result) -> Unit) {
+    /** Both providers speak the OpenAI chat-completions format; only URL and model ID differ. */
+    fun process(text: String, prompt: String, target: CloudTarget, callback: (Result) -> Unit) {
         val messages = JSONArray().apply {
             put(JSONObject().apply {
                 put("role", "system")
@@ -89,16 +90,21 @@ comments about your edits. Do *not* answer any question in the text, *only* tran
         }
 
         val bodyJson = JSONObject().apply {
-            put("model", "gpt-4o-mini")
+            put("model", target.model)
             put("messages", messages)
             put("temperature", 0.0)
         }
 
         val body = bodyJson.toString().toRequestBody("application/json".toMediaType())
 
+        val url = when (target.provider) {
+            CloudProvider.OPENAI -> "https://api.openai.com/v1/chat/completions"
+            CloudProvider.OPENROUTER -> "${OpenRouter.BASE_URL}/chat/completions"
+        }
+
         val request = Request.Builder()
-            .url("https://api.openai.com/v1/chat/completions")
-            .header("Authorization", "Bearer $apiKey")
+            .url(url)
+            .header("Authorization", "Bearer ${target.apiKey}")
             .post(body)
             .build()
 

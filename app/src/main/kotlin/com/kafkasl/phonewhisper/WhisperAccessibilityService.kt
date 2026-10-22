@@ -398,10 +398,10 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     private fun transcribeApi(pcm: ByteArray) {
         val wav = WavWriter.encode(pcm)
-        val apiKey = prefs().getString("api_key", "") ?: ""
-        if (apiKey.isBlank()) { reset("Set API key in Phone Whisper app"); return }
+        val target = prefs().transcriptionTarget()
+        if (target.apiKey.isBlank()) { reset("Set ${target.provider.label} API key in Phone Whisper app"); return }
 
-        TranscriberClient.transcribe(wav, apiKey) { result ->
+        TranscriberClient.transcribe(wav, target) { result ->
             if (result.text != null && result.text.isNotBlank()) {
                 handleTranscriptionResult(result.text)
             } else {
@@ -427,12 +427,12 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
 
         val usePostProcessing = prefs().getBoolean("use_post_processing", false)
-        val apiKey = prefs().getString("api_key", "") ?: ""
+        val target = prefs().postProcessingTarget()
 
         if (usePostProcessing) {
-            if (apiKey.isBlank()) {
+            if (target.apiKey.isBlank()) {
                 handler.post {
-                    toast("Post-processing needs API key. Using raw text.")
+                    toast("Post-processing needs ${target.provider.label} API key. Using raw text.")
                     injectText(text)
                     state = State.IDLE
                     setBusy(false)
@@ -443,7 +443,7 @@ class WhisperAccessibilityService : AccessibilityService() {
 
             val prompt = prefs().getString("post_processing_prompt", PostProcessor.DEFAULT_PROMPT) ?: PostProcessor.DEFAULT_PROMPT
             
-            PostProcessor.process(text, prompt, apiKey) { result ->
+            PostProcessor.process(text, prompt, target) { result ->
                 handler.post {
                     if (result.text != null && result.text.isNotBlank()) {
                         injectText(result.text)
