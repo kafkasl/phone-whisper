@@ -17,14 +17,14 @@ data class Model(
 )
 
 val MODEL_CATALOG = listOf(
+    Model("Whisper Turbo", "sherpa-onnx-whisper-turbo",
+        538, "Best overall · EN, ES, CA", recommended = true),
+    Model("Parakeet 0.6B v3", "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
+        465, "Fast multilingual · EN, ES"),
+    Model("Moonshine v2 Base", "sherpa-onnx-moonshine-base-en-quantized-2026-02-27",
+        106, "Fast · English"),
     Model("Parakeet 110M", "sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8",
-        100, "★★★ Best value", recommended = true),
-    Model("Whisper Base", "sherpa-onnx-whisper-base.en",
-        199, "★★★"),
-    Model("Parakeet 0.6B", "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
-        465, "★★★★ Best quality"),
-    Model("Moonshine Tiny", "sherpa-onnx-moonshine-tiny-en-int8",
-        103, "★★☆ Fast"),
+        100, "Lightweight · English"),
 )
 
 sealed class DownloadState {

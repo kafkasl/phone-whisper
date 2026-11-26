@@ -68,8 +68,8 @@
     </a>
 
     <h1>Privacy Policy</h1>
-    
-    <p>Last updated: March 2026</p>
+
+    <p>Last updated: November 2026</p>
 
     <p>Phone Whisper is an Android dictation app that records speech, transcribes it, and inserts the result into text fields across apps. Your privacy is a core feature of the app, not an afterthought.</p>
 
@@ -77,27 +77,30 @@
     <p>Phone Whisper supports two transcription modes, giving you control over where your audio is processed.</p>
 
     <h3>Local mode</h3>
-    <p>In local mode, audio is processed on-device using local speech recognition models. <strong>Audio does not leave your device.</strong> This is the recommended mode for maximum privacy.</p>
+    <p>In local mode, audio is processed on-device using local <code>sherpa-onnx</code> speech recognition models. <strong>Audio does not leave your device.</strong> This is the recommended mode for maximum privacy.</p>
 
-    <h3>Cloud mode</h3>
-    <p>In cloud mode, recorded audio is sent directly from the device to OpenAI's transcription API to generate text.</p>
-    <p>If optional cleanup is enabled, the transcribed text is also sent directly from the device to OpenAI's chat API to improve punctuation, capitalization, and clarity.</p>
+    <h3>Cloud streaming mode</h3>
+    <p>In cloud mode, audio is streamed directly from your device to the cloud speech-to-text provider you configure (<strong>ElevenLabs</strong> or <strong>Google Gemini</strong>) using your own API key. Retried offline clips are sent directly to that provider's transcription endpoint.</p>
+    <p>If optional post-processing cleanup is enabled on a shortcut, the transcribed text—and, only when <strong>Include screen context</strong> is enabled for that shortcut, a bounded snapshot of visible non-password text in the active window and draft text before the cursor—is sent directly from your device to your configured OpenAI-compatible chat endpoint.</p>
+
+    <h3>Local recordings cache</h3>
+    <p>To prevent lost audio on connection drops, Phone Whisper records audio to private app storage. It retains up to 10 recent unflagged clips plus any clips you explicitly flag, and automatically deletes older unflagged clips. You can delete any clip anytime under <strong>Saved recordings</strong>.</p>
 
     <h2>API keys</h2>
-    <p>If you use cloud features, your OpenAI API key is stored locally on your device in secure app storage. It is used only to authenticate requests sent directly from your device to OpenAI.</p>
+    <p>Your API keys are stored locally on your device in private app storage and used only to authenticate requests sent directly from your device to the providers you configure.</p>
     <p><strong>I do not operate a relay server.</strong> Your keys and your data never touch any infrastructure controlled by me.</p>
 
     <h2>Accessibility Service</h2>
-    <p>Phone Whisper uses Android Accessibility Service for the sole purpose of identifying the currently focused text field and inserting dictated text. This happens only after you explicitly interact with the floating overlay button.</p>
+    <p>Phone Whisper uses Android Accessibility Service only after you explicitly trigger dictation via the floating overlay button:</p>
     <ul>
-      <li>It does not monitor your browsing.</li>
-      <li>It does not collect screen content for analytics.</li>
-      <li>It does not perform background automation or "keylogging."</li>
+      <li>To identify the currently focused text field and insert dictated text.</li>
+      <li>When <strong>Include screen context</strong> is enabled on the chosen shortcut, to read visible non-password text in the active window and draft text before the cursor so cleanup can fix names and technical terms (configurable per shortcut; off by default on <code>NOTE</code>).</li>
+      <li>It does not monitor browsing, log keystrokes, collect analytics, or perform background automation.</li>
     </ul>
 
     <h2>Data collection</h2>
     <p>I do not run a backend for Phone Whisper. I do not collect user accounts, analytics, crash reports, or uploaded recordings.</p>
-    <p>Third-party services you choose to use, such as OpenAI, may process data according to their own terms and privacy policies.</p>
+    <p>Third-party services you choose to use (such as ElevenLabs, Google Gemini, OpenAI, or another OpenAI-compatible endpoint) process data according to their own terms and privacy policies.</p>
 
     <h2>Open source</h2>
     <p>Because trust is earned, Phone Whisper is open source. You can audit the code yourself on GitHub to verify how your data and permissions are handled.</p>

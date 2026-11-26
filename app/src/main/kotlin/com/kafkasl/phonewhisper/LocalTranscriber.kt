@@ -24,11 +24,15 @@ class LocalTranscriber private constructor(private val recognizer: OfflineRecogn
     companion object {
         private const val TAG = "LocalTranscriber"
 
-        /** Find available model dirs under the app's files/models/ dir */
+        /** Find available model dirs under the app's files/models/ dir, ordered by catalog priority. */
         fun availableModels(ctx: Context): List<String> {
             val modelsDir = File(ctx.filesDir, "models")
             if (!modelsDir.exists()) return emptyList()
-            return modelsDir.listFiles()?.filter { it.isDirectory }?.map { it.name } ?: emptyList()
+            val dirs = modelsDir.listFiles()?.filter { it.isDirectory }?.map { it.name } ?: return emptyList()
+            val catalogOrder = MODEL_CATALOG.map { it.archive }
+            val ordered = catalogOrder.filter { it in dirs }
+            val extra = dirs.filterNot { it in catalogOrder }
+            return ordered + extra
         }
 
         /** Create a LocalTranscriber for the given model directory name. Returns null on failure. */
@@ -55,12 +59,28 @@ class LocalTranscriber private constructor(private val recognizer: OfflineRecogn
         }
 
         /** Auto-detect model type from files present in the directory. */
-        private fun detectModelConfig(dir: File): OfflineRecognizerConfig? {
+        internal fun detectModelConfig(dir: File): OfflineRecognizerConfig? {
             val p = dir.absolutePath
-            val tokens = "$p/tokens.txt"
-            if (!File(tokens).exists()) return null
+            val tokens = dir.listFiles()?.firstOrNull { it.name.endsWith("tokens.txt") }?.absolutePath
+                ?: return null
+            val threads = 4
 
-            // Moonshine (has preprocess.onnx)
+            // Moonshine v2 (encoder + merged_decoder, no preprocess.onnx)
+            val mergedDecoder = findFile(p, "merged_decoder")
+            if (mergedDecoder != null) {
+                return OfflineRecognizerConfig(
+                    modelConfig = OfflineModelConfig(
+                        moonshine = OfflineMoonshineModelConfig(
+                            encoder = findFile(p, "encoder") ?: return null,
+                            mergedDecoder = mergedDecoder,
+                        ),
+                        tokens = tokens,
+                        numThreads = threads,
+                    )
+                )
+            }
+
+            // Moonshine v1 (has preprocess.onnx)
             if (File("$p/preprocess.onnx").exists()) {
                 return OfflineRecognizerConfig(
                     modelConfig = OfflineModelConfig(
@@ -71,24 +91,7 @@ class LocalTranscriber private constructor(private val recognizer: OfflineRecogn
                             cachedDecoder = findFile(p, "cached_decode") ?: return null,
                         ),
                         tokens = tokens,
-                        numThreads = 2,
-                    )
-                )
-            }
-
-            // Whisper (has encoder + decoder, no joiner)
-            val whisperEncoder = findFile(p, "encoder")
-            val whisperDecoder = findFile(p, "decoder")
-            if (whisperEncoder != null && whisperDecoder != null && findFile(p, "joiner") == null) {
-                return OfflineRecognizerConfig(
-                    modelConfig = OfflineModelConfig(
-                        whisper = OfflineWhisperModelConfig(
-                            encoder = whisperEncoder,
-                            decoder = whisperDecoder,
-                        ),
-                        tokens = tokens,
-                        numThreads = 2,
-                        modelType = "whisper",
+                        numThreads = threads,
                     )
                 )
             }
@@ -106,8 +109,26 @@ class LocalTranscriber private constructor(private val recognizer: OfflineRecogn
                             joiner = joiner,
                         ),
                         tokens = tokens,
-                        numThreads = 2,
+                        numThreads = threads,
                         modelType = "nemo_transducer",
+                    )
+                )
+            }
+
+            // Whisper (has encoder + decoder, no joiner; supports multilingual auto-detect via language="")
+            if (encoder != null && decoder != null) {
+                val isEnglishOnly = dir.name.contains(".en")
+                return OfflineRecognizerConfig(
+                    modelConfig = OfflineModelConfig(
+                        whisper = OfflineWhisperModelConfig(
+                            encoder = encoder,
+                            decoder = decoder,
+                            language = if (isEnglishOnly) "en" else "",
+                            task = "transcribe",
+                        ),
+                        tokens = tokens,
+                        numThreads = threads,
+                        modelType = "whisper",
                     )
                 )
             }
@@ -119,7 +140,7 @@ class LocalTranscriber private constructor(private val recognizer: OfflineRecogn
                     modelConfig = OfflineModelConfig(
                         nemo = OfflineNemoEncDecCtcModelConfig(model = ctcModel),
                         tokens = tokens,
-                        numThreads = 2,
+                        numThreads = threads,
                     )
                 )
             }
@@ -127,16 +148,14 @@ class LocalTranscriber private constructor(private val recognizer: OfflineRecogn
             return null
         }
 
-        /** Find first file matching prefix (prefer int8 quantized). */
-        private fun findFile(dir: String, prefix: String): String? {
-            val d = File(dir)
-            // Prefer int8 quantized
-            d.listFiles()?.firstOrNull { it.name.startsWith(prefix) && it.name.contains("int8") }
-                ?.let { return it.absolutePath }
-            // Fallback to any onnx/ort
-            return d.listFiles()?.firstOrNull {
-                it.name.startsWith(prefix) && (it.name.endsWith(".onnx") || it.name.endsWith(".ort"))
-            }?.absolutePath
+        /** Find model file matching keyword (prefer int8 quantized; handles prefixes like turbo-encoder.int8.onnx). */
+        internal fun findFile(dir: String, keyword: String): String? {
+            val files = File(dir).listFiles()?.filter {
+                (it.name.endsWith(".onnx") || it.name.endsWith(".ort")) &&
+                    it.name.contains(keyword, ignoreCase = true)
+            } ?: return null
+            return files.firstOrNull { it.name.contains("int8", ignoreCase = true) }?.absolutePath
+                ?: files.firstOrNull()?.absolutePath
         }
     }
 }

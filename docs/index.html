@@ -25,9 +25,9 @@
         <span>Phone Whisper</span>
       </a>
       <div class="nav-links">
-        <a href="#termux">Termux</a>
         <a href="#how-it-works">How it works</a>
         <a href="#modes">Local vs cloud</a>
+        <a href="#privacy">Privacy</a>
         <a href="#faq">FAQ</a>
         <a href="https://github.com/kafkasl/phone-whisper" target="_blank" rel="noopener" id="nav-github">GitHub</a>
       </div>
@@ -47,9 +47,9 @@
           No keyboard switching. Local or cloud transcription.
         </p>
         <ul class="hero-points">
-          <li>Better transcription than typical keyboard dictation</li>
-          <li>Dictate first, then keep editing in the same field</li>
-          <li>Optional cleanup for prompts, commands, and general writing</li>
+          <li>Real-time streaming preview in a floating top bar while you speak</li>
+          <li>Long-press shortcut pills for instant language and mode switching</li>
+          <li>Disk-backed offline retry, one-tap cancel, and automatic local fallback</li>
         </ul>
         <div class="hero-ctas">
           <a href="https://github.com/kafkasl/phone-whisper/releases" id="cta-download" class="btn btn-primary" target="_blank" rel="noopener">Download APK</a>
@@ -101,57 +101,6 @@
     </div>
   </section>
 
-  <section id="termux">
-    <div class="section-inner termux-inner">
-      <div class="termux-copy">
-        <div class="section-kicker">Dev mode. Niche, but fun</div>
-        <h2>If you type into terminals on your phone, this is going to be great for you.</h2>
-        <p class="section-sub">
-          In Dev mode, say <strong>“command mode”</strong> and then either describe the command you want or literally spell it. The spoken text and the inserted text do not have to be the same.
-        </p>
-        <div class="dev-mode-examples">
-          <div class="dev-example">
-            <span class="dev-example-label">You say</span>
-            <code>command mode show files in current dir</code>
-            <span class="dev-example-arrow">→</span>
-            <code>ls -l .</code>
-          </div>
-          <div class="dev-example">
-            <span class="dev-example-label">You say</span>
-            <code>command mode git commit minus m description</code>
-            <span class="dev-example-arrow">→</span>
-            <code>git commit -m "Clean up overlay timing"</code>
-          </div>
-        </div>
-      </div>
-      <div class="termux-demo" aria-hidden="true">
-        <div class="termux-card">
-          <div class="termux-topbar">
-            <span class="termux-dot"></span>
-            <span class="termux-dot"></span>
-            <span class="termux-dot"></span>
-            <span class="termux-title">Termux</span>
-            <span class="termux-mode-badge">Dev mode</span>
-          </div>
-          <div class="speech-bubble" id="termux-speech-bubble"><span id="termux-speech-text"></span></div>
-          <div class="termux-body">
-            <div class="termux-line muted">~/phone-whisper $</div>
-            <div class="termux-line"><span class="prompt">$</span> <span id="termux-typed-text"></span><span class="cursor" id="termux-cursor">|</span></div>
-            <div class="termux-note">The spoken text and inserted command can be different.</div>
-          </div>
-          <div class="overlay-button overlay-button-small" id="termux-overlay-btn" title="Tap to dictate">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor" stroke="none"/>
-              <path d="M5 10c0 3.87 3.13 7 7 7s7-3.13 7-7"/>
-              <line x1="12" y1="17" x2="12" y2="21"/>
-              <line x1="9" y1="21" x2="15" y2="21"/>
-            </svg>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
   <section id="how-it-works">
     <div class="section-inner">
       <h2>How it works</h2>
@@ -159,36 +108,36 @@
         <li class="step">
           <span class="step-num">1</span>
           <div class="step-body">
-            <strong>Tap the overlay button</strong>
-            <p>A small floating button lives on top of your apps. Tap it once to start recording.</p>
+            <strong>Tap or long-press the overlay button</strong>
+            <p>Tap once for your default preset, or long-press and slide onto a wide shortcut pill to switch language or toggle cleanup and screen context.</p>
           </div>
         </li>
         <li class="step">
           <span class="step-num">2</span>
           <div class="step-body">
-            <strong>Speak</strong>
-            <p>Dictate naturally. The button pulses red while it's listening.</p>
+            <strong>Speak and watch live words appear</strong>
+            <p>Audio streams over WebSocket (while backing up locally to disk) and displays live words in the top bar.</p>
           </div>
         </li>
         <li class="step">
           <span class="step-num">3</span>
           <div class="step-body">
-            <strong>Tap again to stop</strong>
-            <p>The button turns gray while the transcription runs.</p>
+            <strong>Tap stop or Done (or cancel anytime)</strong>
+            <p>Tap the red button again or Done in the top bar to finalize, or tap Cancel to abort cleanly.</p>
           </div>
         </li>
         <li class="step">
           <span class="step-num">4</span>
           <div class="step-body">
-            <strong>Audio is transcribed</strong>
-            <p>On-device using local models, or sent to OpenAI Whisper with your own API key.</p>
+            <strong>Optional context-aware polish</strong>
+            <p>When enabled on a shortcut, a fast OpenAI-compatible model fixes spelling, technical terms, and spoken self-corrections.</p>
           </div>
         </li>
         <li class="step">
           <span class="step-num">5</span>
           <div class="step-body">
-            <strong>Text is inserted</strong>
-            <p>The transcribed text goes into the currently focused field when the app exposes a standard Android input field. If insertion fails, it falls back to the clipboard.</p>
+            <strong>Text is inserted cleanly</strong>
+            <p>The finished text goes straight into the focused Android input field, with clipboard fallback and offline retry if your connection drops.</p>
           </div>
         </li>
       </ol>
@@ -203,45 +152,45 @@
         <div class="mode-card">
           <h3>Local mode</h3>
           <ul>
-            <li>On-device transcription</li>
+            <li>On-device transcription via <code>sherpa-onnx</code></li>
             <li>Audio never leaves your phone</li>
             <li>No API key required</li>
-            <li>Download a model once, use it offline</li>
+            <li>Automatic fallback if cloud credits run out</li>
           </ul>
           <div class="models-table">
             <div class="models-table-head">Available models</div>
             <div class="model-row">
+              <span class="model-name">Whisper Turbo</span>
+              <span class="model-size">538 MB</span>
+              <span class="model-note default-badge">Recommended · EN, ES, CA</span>
+            </div>
+            <div class="model-row">
+              <span class="model-name">Parakeet 0.6B v3</span>
+              <span class="model-size">465 MB</span>
+              <span class="model-note">Fast · EN, ES</span>
+            </div>
+            <div class="model-row">
+              <span class="model-name">Moonshine v2 Base</span>
+              <span class="model-size">106 MB</span>
+              <span class="model-note">Fast · English</span>
+            </div>
+            <div class="model-row">
               <span class="model-name">Parakeet 110M</span>
               <span class="model-size">100 MB</span>
-              <span class="model-note default-badge">Recommended</span>
-            </div>
-            <div class="model-row">
-              <span class="model-name">Moonshine Tiny</span>
-              <span class="model-size">103 MB</span>
-              <span class="model-note">Fastest</span>
-            </div>
-            <div class="model-row">
-              <span class="model-name">Whisper Base</span>
-              <span class="model-size">199 MB</span>
-              <span class="model-note">Solid baseline</span>
-            </div>
-            <div class="model-row">
-              <span class="model-name">Parakeet 0.6B</span>
-              <span class="model-size">465 MB</span>
-              <span class="model-note">Best quality</span>
+              <span class="model-note">Lightweight · English</span>
             </div>
           </div>
         </div>
         <div class="mode-card">
-          <h3>Cloud mode</h3>
+          <h3>Cloud streaming mode</h3>
           <ul>
-            <li>Uses OpenAI Whisper API</li>
-            <li>Your own API key, stored on-device</li>
-            <li>No backend run by me</li>
-            <li>Optional: send transcript to OpenAI for cleanup</li>
+            <li>Real-time streaming via <strong>ElevenLabs Scribe v3 Live</strong> or <strong>Google Gemini Live</strong></li>
+            <li>Your own API keys, stored privately on-device</li>
+            <li>Optional cleanup via any OpenAI-compatible endpoint (defaults to Gemini Flash-Lite)</li>
+            <li>Disk backup + inline retry if your connection drops</li>
           </ul>
           <div class="cloud-note">
-            Requests go straight from your phone to OpenAI. I'm not in the loop.
+            Requests go straight from your phone to your chosen provider. I'm not in the loop.
           </div>
         </div>
       </div>
@@ -253,10 +202,10 @@
       <div class="info-box">
         <h2>Why Accessibility permission is needed</h2>
         <p>
-          Phone Whisper uses Android Accessibility Service for one narrow reason: <strong>inserting dictated text into the currently focused text field across apps.</strong>
+          Phone Whisper uses Android Accessibility Service only when you explicitly dictate: to <strong>insert dictated text into the currently focused field</strong> and—only on shortcuts where you enable screen context—to read visible non-password text so cleanup can fix names and jargon.
         </p>
         <p>
-          It does not replace your keyboard. It does not run background automation. It only acts after you explicitly tap the overlay button.
+          It does not replace your keyboard, log keystrokes, or run background automation.
         </p>
         <p>
           The app is open source. You can read exactly what it does before granting the permission.
@@ -284,8 +233,8 @@
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
           <div>
-            <strong>Cloud mode goes direct to OpenAI.</strong>
-            <p>Audio is sent from your device straight to the OpenAI API using your own key. I don't operate a relay server.</p>
+            <strong>Cloud mode goes direct to your provider.</strong>
+            <p>Audio streams straight from your phone to ElevenLabs or Google Gemini using your own API key. I don't operate a relay server.</p>
           </div>
         </div>
         <div class="privacy-point">
@@ -316,19 +265,15 @@
         </details>
         <details class="faq-item" id="faq-accessibility">
           <summary>Why does it need Accessibility permission?</summary>
-          <p>Android doesn't have a standard API for inserting text into another app's focused field. The Accessibility Service is the sanctioned way to do that cross-app. Phone Whisper uses it for exactly one thing: inserting the transcribed text.</p>
+          <p>Android doesn't have a standard API for inserting text into another app's focused field. Phone Whisper uses Accessibility only when you dictate—to insert text and, if enabled on that shortcut, read non-password screen context to improve names and technical terms.</p>
         </details>
         <details class="faq-item" id="faq-audio">
           <summary>Does audio stay on-device?</summary>
-          <p>In local mode, yes. In cloud mode, audio is sent directly to OpenAI's API from your device using your own API key. I don't have a backend and never see your audio.</p>
+          <p>In local mode, yes. In cloud mode, audio streams directly from your device to ElevenLabs or Google Gemini using your own API key. I don't have a backend and never see your audio.</p>
         </details>
         <details class="faq-item" id="faq-compatibility">
           <summary>Does it work in every app?</summary>
           <p>It works in most apps with standard text fields. Some apps restrict text injection for security reasons, and others use custom text surfaces instead of normal input fields. In those cases, the transcribed text is copied to your clipboard as a fallback.</p>
-        </details>
-        <details class="faq-item" id="faq-termux">
-          <summary>How does it work in Termux?</summary>
-          <p>Termux's main terminal area is not a standard Android text field, so direct insertion may not work there. Swipe the extra keys row left or right to switch to Termux's native text input box, then dictate there.</p>
         </details>
         <details class="faq-item" id="faq-playstore">
           <summary>Is it on the Play Store?</summary>
@@ -336,7 +281,7 @@
         </details>
         <details class="faq-item" id="faq-mvp">
           <summary>Is this finished?</summary>
-          <p>Not really. It's an early but working MVP. The core loop already works well enough to use every day, and I'm improving it in public.</p>
+          <p>It's an open-source personal tool that I use daily and keep improving in public.</p>
         </details>
       </div>
     </div>

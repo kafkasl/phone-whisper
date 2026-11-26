@@ -5,3 +5,5 @@ local.properties
 .env
 *.apk
 app/src/main/jniLibs/
+local-docs/
+Real-Time Dictation and Subtitles Stack.txt

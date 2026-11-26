@@ -1,6 +1,5 @@
 document.addEventListener('DOMContentLoaded', () => {
   initChatDemo();
-  initTermuxDemo();
 });
 
 function initChatDemo() {
@@ -66,102 +65,6 @@ function initChatDemo() {
     if (id !== runId) return;
     clearDemo();
     await sleep(1200);
-    if (id !== runId) return;
-    play();
-  };
-
-  play();
-  overlayBtn.addEventListener('click', play);
-}
-
-function initTermuxDemo() {
-  const overlayBtn = document.getElementById('termux-overlay-btn');
-  const typedText = document.getElementById('termux-typed-text');
-  const speechBubble = document.getElementById('termux-speech-bubble');
-  const speechText = document.getElementById('termux-speech-text');
-
-  if (!overlayBtn || !typedText || !speechBubble || !speechText) return;
-
-  const spokenText = '“command mode show files in the current directory”';
-  const demoText = 'ls -l .';
-  let typingTimer;
-  let speechTimer;
-  let runId = 0;
-
-  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-  const setState = (state) => {
-    overlayBtn.classList.remove('recording', 'busy');
-    if (state) overlayBtn.classList.add(state);
-  };
-
-  const clearDemo = () => {
-    clearInterval(typingTimer);
-    clearInterval(speechTimer);
-    typedText.textContent = '';
-    speechText.textContent = '';
-    speechBubble.classList.remove('visible');
-    setState('');
-  };
-
-  const typeSpokenText = (id) => new Promise(resolve => {
-    let i = 0;
-    speechBubble.classList.add('visible');
-    speechTimer = setInterval(() => {
-      if (id !== runId) {
-        clearInterval(speechTimer);
-        resolve(false);
-        return;
-      }
-      speechText.textContent += spokenText[i] || '';
-      i += 1;
-      if (i >= spokenText.length) {
-        clearInterval(speechTimer);
-        resolve(true);
-      }
-    }, 34);
-  });
-
-  const typeCommandText = (id) => new Promise(resolve => {
-    let i = 0;
-    typingTimer = setInterval(() => {
-      if (id !== runId) {
-        clearInterval(typingTimer);
-        resolve(false);
-        return;
-      }
-      typedText.textContent += demoText[i] || '';
-      i += 1;
-      if (i >= demoText.length) {
-        clearInterval(typingTimer);
-        resolve(true);
-      }
-    }, 80);
-  });
-
-  const play = async () => {
-    const id = ++runId;
-    clearDemo();
-    await sleep(700);
-    if (id !== runId) return;
-    setState('recording');
-    const speechDone = await typeSpokenText(id);
-    if (!speechDone || id !== runId) return;
-    await sleep(3200);
-    if (id !== runId) return;
-    speechBubble.classList.remove('visible');
-    await sleep(220);
-    if (id !== runId) return;
-    setState('busy');
-    await sleep(900);
-    if (id !== runId) return;
-    const commandDone = await typeCommandText(id);
-    if (!commandDone || id !== runId) return;
-    setState('');
-    await sleep(2600);
-    if (id !== runId) return;
-    clearDemo();
-    await sleep(1400);
     if (id !== runId) return;
     play();
   };

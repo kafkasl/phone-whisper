@@ -4,26 +4,30 @@
 
 # Phone Whisper
 
-Push-to-talk dictation for Android.
+Fast streaming dictation for Android across apps—without replacing your keyboard.
 
-Phone Whisper lets you speak into most apps without switching keyboards. Tap the floating button, speak, tap again, and your text is inserted into the currently focused text field when the app exposes a standard Android input field.\
+<p align="center">
+  <img src="docs/demo.gif" width="300" alt="Phone Whisper live streaming and shortcut pills demo">
+</p>
 
-It supports:
+Tap the floating button to dictate in your default language, or long-press and slide onto a shortcut pill to switch language or toggle cleanup and screen context. Words stream live in a top preview bar while you speak, then insert straight into the focused Android text field when you tap stop.
 
-- **Local on-device transcription** with sherpa-onnx
-- **Cloud transcription** with OpenAI Whisper
-- **Optional cleanup** with OpenAI to fix punctuation and grammar
+If you try it and it genuinely saves you time, consider [sponsoring](https://github.com/sponsors/kafkasl).
 
-If you try it and it genuinely saves you time, consider [sponsoring](https://github.com/sponsors/kafkasl)
+## Highlights
 
+- **Real-time cloud streaming**: Streams 16 kHz audio over WebSocket to **ElevenLabs Scribe v3 Live** (default) or **Google Gemini Live** (`gemini-3.5-transcribe-live`), showing live partial and locked words in a top bar as you speak.
+- **Long-press language & mode shortcuts**: Quick tap runs your default preset (`EN`); long-press fans out wide shortcut pills (`ES`, `CA`, `NOTE`, plus an optional fourth slot). Each preset is configurable for badge, language, post-processing, and screen context.
+- **Context-aware cleanup**: Optional Stage 2 polish via any OpenAI-compatible Chat Completions endpoint (defaults to Google Gemini `gemini-3.5-flash-lite`) using optional Accessibility screen context and text before the cursor to fix names, technical terms, and spoken self-corrections.
+- **Offline resilience, cancel, and credit fallback**: Every recording streams simultaneously to a local WAV file on disk so network drops never lose speech. Cancel mid-recording or mid-polish anytime, retry failed clips inline or from **Saved recordings**, flag bad clips so they stay pinned, and automatically fall back to your local on-device model if cloud credits run out.
+- **Local on-device mode (`sherpa-onnx`)**: Run completely offline with **Whisper Turbo** (multilingual EN/ES/CA), **Parakeet 0.6B v3** (EN/ES), **Moonshine v2 Base**, or **Parakeet 110M**.
 
 ## Why I built this
 
-- I like SwiftKey and want to keep it as keyboard but...
-- Most keyboard dictation felt too inaccurate
-- Gemini's voice input auto submits your transcription (which is pretty bad) so you can't edit it before sending
-- Post processing yields much better results, specially adding a list of keywords and technical terms you often use
-- Inserting text into the field you're already using lets you keep editing it like any other draft.
+- I like SwiftKey and want to keep my existing keyboard.
+- Built-in keyboard dictation felt inaccurate, and voice assistants that auto-submit prevent editing before sending.
+- Streaming live text while speaking makes 1+ minute dictations feel instant, and optional context-aware post-processing fixes spelling, jargon, and self-corrections.
+- Inserting directly into the field you are already using lets you keep editing like any other draft.
 
 ## Install
 
@@ -56,41 +60,40 @@ make adb-install
 
 ## How it works
 
-1. A small overlay button floats on screen
-2. Tap once to start recording
-3. Tap again to stop
-4. Audio is transcribed locally or in the cloud
-5. The text is inserted into the focused text field
-6. If insertion fails, the text is copied to the clipboard
+1. A small overlay button floats on screen (drag it immediately to move it along either edge).
+2. **Tap** once to start recording with your default preset, or **long-press and slide** onto a shortcut pill (`ES`, `CA`, `NOTE`) to pick another language or mode.
+3. Live words stream in the top bar while you speak. Tap the red mic button again—or **Done** in the top bar—to finish, or tap **Cancel** (`×`) to abort.
+4. If post-processing is enabled for that shortcut, a fast cleanup pass polishes the text before inserting it into the focused field (with **Use raw** and **Flag** actions on the confirmation pill).
+5. If insertion is blocked by an app, the text is always copied to your clipboard. If your connection drops mid-speech, recording continues to disk and offers **Retry**, **Use partial**, or **Discard**.
 
 ## Setup
 
 ### First-time setup
 
-1. Open **Phone Whisper**
-2. Grant the **audio recording** permission
-3. Enable the **Accessibility Service**
-4. Choose your transcription mode:
-   - **Local**: download a model in the app
-   - **Cloud**: paste your OpenAI API key
-
-Once setup is done, the floating button is ready.
+1. Open **Phone Whisper**.
+2. Grant the **Audio permission** and enable the **Accessibility service**.
+3. Choose your transcription mode:
+   - **Cloud streaming**: select **ElevenLabs** (default) or **Gemini Live**, and paste your own API key. Optionally configure the **Cleanup Model** (OpenAI-compatible base URL, model, and key) for post-processing.
+   - **Local mode**: toggle **Use cloud streaming** off and download a local model (such as **Whisper Turbo**) directly in the app.
+4. Customize **Shortcuts** (`Default tap` and `Long-press 1–4`) with your preferred languages, cleanup, and screen context settings.
 
 ## Why does it need Accessibility?
 
-Phone Whisper uses Android Accessibility Service for one narrow reason: to insert dictated text into the currently focused text field across apps.
+Phone Whisper uses Android Accessibility Service for two user-triggered actions only when you dictate:
 
-It does **not** replace your keyboard. It does **not** run background automation. It only acts after you explicitly tap the overlay button.
+1. **Inserting dictated text** into the currently focused text field across apps.
+2. **Optional screen context** (configurable per shortcut, off by default on `NOTE`): reading visible text in the active window and draft text before the cursor—explicitly skipping password fields—so cleanup can fix names, technical terms, and capitalization.
+
+It does **not** replace your keyboard, monitor browsing, or run background automation.
 
 ## Privacy
 
-Phone Whisper supports two modes:
+- **Local mode**: audio stays completely on-device.
+- **Cloud mode**: audio streams directly from your device to your chosen provider (**ElevenLabs** or **Google Gemini**) using your own API key.
+- **Optional cleanup**: when enabled on a shortcut, transcript text (plus optional non-password screen context) is sent directly from your device to your configured OpenAI-compatible endpoint.
+- **Local recordings cache**: recent audio clips (last 10 unflagged plus any clips you explicitly flag) are stored privately in app storage for offline retry and review, and can be deleted anytime under **Saved recordings**.
 
-- **Local mode**: audio stays on-device
-- **Cloud mode**: audio is sent directly from your device to OpenAI's transcription API
-- **Optional cleanup**: transcript text is sent directly from your device to OpenAI's chat API
-
-I don't run a backend for this app. In cloud mode, requests go straight from your phone to OpenAI using your own API key.
+I do not run a backend or relay server for this app.
 
 Full policy: [PRIVACY.md](PRIVACY.md)
 
@@ -102,16 +105,16 @@ Models are stored in app storage under:
 /data/data/com.kafkasl.phonewhisper/files/models/
 ```
 
-Current catalog:
+Current catalog (downloaded directly from `sherpa-onnx` release archives):
 
 | Model | Size | Notes |
 |---|---:|---|
-| Parakeet 110M | 100 MB | Best default |
-| Whisper Base | 199 MB | Solid baseline |
-| Parakeet 0.6B | 465 MB | Best quality |
-| Moonshine Tiny | 103 MB | Fastest |
+| Whisper Turbo | 538 MB | Recommended default · Multilingual (EN, ES, CA) |
+| Parakeet 0.6B v3 | 465 MB | Fast multilingual (EN, ES) |
+| Moonshine v2 Base | 106 MB | Fast · English |
+| Parakeet 110M | 100 MB | Lightweight · English |
 
-The app downloads and extracts models directly from the sherpa-onnx release archives.
+If cloud mode detects an out-of-credits / quota error and a local model is installed, Phone Whisper automatically switches to your local model and transcribes the saved recording so no speech is lost.
 
 ## Development
 
@@ -122,32 +125,12 @@ make adb-install # build + install via ADB
 make clean       # clean build artifacts
 ```
 
-## App compatibility
+## App compatibility & limitations
 
-Phone Whisper works best in apps that use standard Android text fields.
-Some apps use custom text surfaces or terminal-style views, which may not support direct accessibility paste.
-When insertion is not possible, Phone Whisper falls back to copying the transcript to the clipboard.
-
-### Termux
-
-Termux's main terminal area is not a standard Android text field, so direct insertion may not work there.
-
-To use Phone Whisper in Termux:
-
-1. Focus Termux
-2. Swipe the extra keys row (`ESC`, `CTRL`, `ALT`, arrows, etc.) left or right
-3. Switch to Termux's native text input box
-4. Dictate there
-
-Once text is inserted into the native input box, Termux sends it to the terminal normally.
-
-## Current limitations
-
-- Accessibility permission is required for cross-app insertion
-- Some apps may block paste or text injection
-- Some apps use custom input surfaces instead of standard Android text fields
-- Local models are large
-- Cloud mode requires your own OpenAI API key
+- Works best in apps that expose standard Android text fields (`EditText`).
+- Apps with custom input surfaces or restricted paste fall back to copying the transcript to the clipboard.
+- Accessibility permission is required for cross-app insertion (and optional screen context).
+- Cloud mode requires your own ElevenLabs, Gemini, or OpenAI-compatible API key.
 
 ## Support the project
 
